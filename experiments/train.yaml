@@ -1,0 +1,71 @@
+seml:
+  project_root_dir: ..
+  executable: experiments/train.py
+  name: train
+  output_dir: /nfs/students/ayle/NodeDP/logs
+  conda_environment: gcn-dp
+
+slurm:
+  experiments_per_job: 1
+  sbatch_options:
+    gres: gpu:1       # num GPUs
+    mem: 8G          # memory
+    cpus-per-task: 1  # num cores
+    time: 0-4:00     # max time, D-HH:MM
+    partition: ['gpu_all']
+#    qos: interactive
+
+###### BEGIN PARAMETER CONFIGURATION ######
+
+fixed:
+  data_path: './data/ogbn-arxiv_undirected'
+  num_subgraphs: 200
+  num_par_samplers: 10
+  use_cuda: True
+  eval_every: 10
+  num_iterations: 1000
+
+  sampler_args:
+#    method: 'drw'
+#    num_root: 300
+#    depth: 2
+#    only_roots: True
+
+#    method: 'rw'
+#    num_root: 500
+#    depth: 1
+#    only_roots: False
+
+    method: 'nodes_max'
+    num_nodes: 1000
+    max_degree: 7
+    only_roots: False
+
+  model_args:
+    arch: 'GraphSAGE'
+    hidden_channels: 512
+    dropout: 0.1
+    num_layers: 1
+
+#    arch: 'GraphSAGE'
+#    hidden_channels: 512
+#    dropout: 0.1
+#    num_layers: 2
+
+  training_args:
+#    method: 'ours'
+#    loss: 'softmax'
+#    lr: 0.01
+#    alpha: 2
+#    delta: 1e-4
+
+#    method: 'normal'
+#    loss: 'softmax'
+#    lr: 0.01
+#    clip_norm: 5
+
+    method: 'node_dp_max_degree'
+    loss: 'softmax'
+    lr: 0.01
+    alpha: 2
+    delta: 1e-4

@@ -1,0 +1,61 @@
+import torch
+from torch import nn
+import torch.nn.functional as F
+import numpy as np
+from sklearn import metrics
+from torch.autograd import Variable
+
+
+from src.models import create_model
+
+
+def to_numpy(x):
+    if isinstance(x, Variable):
+        x = x.data
+    return x.cpu().numpy() if x.is_cuda else x.numpy()
+
+
+class Evaluator:
+    def __init__(self, model_args, feats, class_arr, loss):
+        self.feats = torch.from_numpy(feats.astype(np.float32))
+        self.labels = torch.from_numpy(class_arr.astype(np.float32))
+
+        # Loss type
+        if loss == 'sigmoid':
+            self.sigmoid_loss = True
+        else:
+            assert loss == 'softmax'
+            self.sigmoid_loss = False
+
+        # Create model
+        in_channels = self.feats.shape[1]
+        out_channels = self.labels.shape[1]
+        self.model = create_model(in_channels, out_channels, model_args)
+
+    def predict(self, preds):
+        return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
+
+    def eval_step(self, nodes, adj, roots=None):
+        self.model.eval()
+        with torch.no_grad():
+            preds = self.model(self.feats[nodes], adj)
+        return self.predict(preds), self.labels[nodes]
+
+    def calc_metrics(self, preds, labels):
+        y_pred = to_numpy(preds)
+        y_true = to_numpy(labels)
+
+        if not self.sigmoid_loss:
+            y_true = np.argmax(y_true, axis=1)
+            y_pred = np.argmax(y_pred, axis=1)
+        else:
+            y_pred[y_pred > 0.5] = 1
+            y_pred[y_pred <= 0.5] = 0
+
+        ret = {
+            "F1 Micro": metrics.f1_score(y_true, y_pred, average="micro"),
+            "F1 Macro": metrics.f1_score(y_true, y_pred, average="macro")
+        }
+        if not self.sigmoid_loss:
+            ret["Accuracy"] = metrics.accuracy_score(y_true, y_pred)
+        return ret
