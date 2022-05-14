@@ -38,7 +38,7 @@ def run(data_path, num_subgraphs, num_par_samplers, use_cuda, num_iterations, ev
     num_subgraphs_per_sampler = define_additional_args(num_subgraphs, num_par_samplers, out)
     minibatch = Minibatch(adj_full, adj_train, role, num_par_samplers, num_subgraphs_per_sampler, use_cuda,
                           sampler_args)
-    trainer = Trainer(training_args, model_args, feats, class_arr, use_cuda, minibatch, out, sampler_args['only_roots'])
+    trainer = Trainer(training_args, model_args, feats, class_arr, use_cuda, minibatch, out, sampler_args)
     evaluator = Evaluator(model_args, feats, class_arr, training_args['loss'])
 
     if training_args['method'] == 'ours':

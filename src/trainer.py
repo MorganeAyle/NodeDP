@@ -14,14 +14,14 @@ from functorch import make_functional_with_buffers, vmap, grad
 
 
 class Trainer:
-    def __init__(self, training_args, model_args, feats, class_arr, use_cuda, minibatch, out, only_roots):
+    def __init__(self, training_args, model_args, feats, class_arr, use_cuda, minibatch, out, sampler_args):
         self.feats = torch.from_numpy(feats.astype(np.float32))
         self.labels = torch.from_numpy(class_arr.astype(np.float32))
         if use_cuda:
             self.feats = self.feats.cuda()
             self.labels = self.labels.cuda()
         self.use_cuda = use_cuda
-        self.only_roots = only_roots
+        self.sampler_args = sampler_args
 
         # minibatch
         self.minibatch = minibatch
@@ -42,7 +42,8 @@ class Trainer:
             self.model.to('cuda')
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=training_args['lr'])
+        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=training_args['lr'])
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=training_args['lr'])
 
         # Get gradient norms
         if training_args['method'] == 'normal':
@@ -161,7 +162,7 @@ class Trainer:
         ft_compute_grad = grad(self.compute_loss_stateless_model)
         ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, None, None, 0, 0))
 
-        if not self.only_roots:
+        if not (self.sampler_args["method"] == "drw" and self.sampler_args["only_roots"]):
             ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj.to_dense(),
                                                          self.labels[nodes], torch.arange(nodes.size))
         else:
@@ -205,8 +206,5 @@ class Trainer:
         index = idx.unsqueeze(0)
 
         predictions = self.fmodel(params, buffers, x, adj)
-        if not self.only_roots:
-            loss = self._loss(predictions[index], targets)
-        else:
-            loss = self._loss(predictions[index], targets)
+        loss = self._loss(predictions[index], targets)
         return loss

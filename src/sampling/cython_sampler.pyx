@@ -679,12 +679,6 @@ cdef class DisjointRW(SamplerNO):
                 idepth = 0
                 while idepth < self.size_depth:
                     if self.adj_indptr_vec[v + 1] - self.adj_indptr_vec[v] > 0:
-                        # new_v = self.adj_indices_vec[
-                        #     self.adj_indptr_vec[v] + rand() % (self.adj_indptr_vec[v + 1] - self.adj_indptr_vec[v])]
-                        # if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), new_v) == self.node_sampled[idx_subg].end():
-                        #     self.node_sampled[idx_subg].push_back(new_v)
-                        #     self.no_rw[idx_subg][new_v] = iroot
-                        #     remaining_root.erase(cutils.find(remaining_root.begin(), remaining_root.end(), new_v))
                         v = self.adj_indices_vec[
                             self.adj_indptr_vec[v] + rand() % (self.adj_indptr_vec[v + 1] - self.adj_indptr_vec[v])]
                         if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
@@ -692,6 +686,8 @@ cdef class DisjointRW(SamplerNO):
                             self.node_sampled[idx_subg].push_back(v)
                             self.no_rw[idx_subg][v] = iroot
                             remaining_root.erase(cutils.find(remaining_root.begin(), remaining_root.end(), v))
+                        else:
+                            break
                     idepth = idepth + 1
                 iroot = iroot + 1
             r = r + 1
@@ -713,53 +709,117 @@ cdef class NodesUniformMaxDegree(MaxDegreeSampler):
         self.size_subgraph = size_subgraph
         self.max_degree = max_degree
 
+    # cdef void sample(self, int p) nogil:
+    #     cdef int inode = 0
+    #     cdef int neigh_indices = 0
+    #     cdef int r = 0
+    #     cdef int idx_subg
+    #     cdef int v
+    #     cdef int num_train_node = self.node_train_vec.size()
+    #     cdef vector[int] counts
+    #     cdef int neigh
+    #     while r < self.num_sample_per_proc:
+    #         idx_subg = p*self.num_sample_per_proc+r
+    #         counts = vector[int](num_train_node, 0)
+    #         inode = 0
+    #         while inode < self.size_subgraph:
+    #             idx = rand()%num_train_node
+    #             if counts[idx] == self.max_degree:
+    #                 continue
+    #             v = self.node_train_vec[idx]
+    #             neigh_indices = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
+    #             neigh = 0
+    #             while neigh < neigh_indices:
+        #                 new_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh]
+    #                 for i in range(num_train_node):
+    #                     if self.node_train_vec[i] == new_v:
+    #                         break
+    #                 if counts[i] == self.max_degree:
+    #                     neigh = neigh + 1
+    #                     continue
+    #                 if counts[idx] == self.max_degree:
+    #                     break
+    #                 counts[idx] = counts[idx] + 1
+    #                 counts[i] = counts[i] + 1
+    #
+    #                 self.neighbors[idx_subg][v].push_back(new_v)
+    #                 self.neighbors[idx_subg][new_v].push_back(v)
+    #
+    #                 if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
+    #                         self.node_sampled[idx_subg].end():
+    #                     inode = inode + 1
+    #                     self.node_sampled[idx_subg].push_back(v)
+    #
+    #                 if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), new_v) == \
+    #                         self.node_sampled[idx_subg].end():
+    #                     inode = inode + 1
+    #                 self.node_sampled[idx_subg].push_back(new_v)
+    #
+    #                 neigh = neigh + 1
+    #
+    #         r = r + 1
+    #         sort(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end())
+    #         self.node_sampled[idx_subg].erase(unique(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end()),self.node_sampled[idx_subg].end())
+
     cdef void sample(self, int p) nogil:
         cdef int inode = 0
-        cdef int neigh_indices = 0
+        cdef int num_neigh = 0
         cdef int r = 0
         cdef int idx_subg
         cdef int v
         cdef int num_train_node = self.node_train_vec.size()
         cdef vector[int] counts
-        cdef int neigh
+        cdef int neigh_idx
+        cdef int prob
+        cdef vector[vector[int]] roots
+        roots = vector[vector[int]](self.num_proc*self.num_sample_per_proc, vector[int](num_train_node))
+
         while r < self.num_sample_per_proc:
             idx_subg = p*self.num_sample_per_proc+r
             counts = vector[int](num_train_node, 0)
+
             inode = 0
             while inode < self.size_subgraph:
                 idx = rand()%num_train_node
-                if counts[idx] == self.max_degree:
-                    continue
                 v = self.node_train_vec[idx]
-                neigh_indices = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
-                neigh = 0
-                while neigh < neigh_indices:
-                    new_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh]
-                    for i in range(num_train_node):
-                        if self.node_train_vec[i] == new_v:
-                            break
-                    if counts[i] == self.max_degree:
-                        neigh = neigh + 1
-                        continue
-                    if counts[idx] == self.max_degree:
-                        break
-                    counts[idx] = counts[idx] + 1
-                    counts[i] = counts[i] + 1
+                if cutils.find(roots[idx_subg].begin(), roots[idx_subg].end(), v) != roots[idx_subg].end():
+                    continue
+                roots[idx_subg].push_back(v)
+                inode = inode + 1
+                num_neigh = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
+                if num_neigh > 0:
+                    prob = self.max_degree // (2 * num_neigh)
+                    neigh_idx = 0
+                    while neigh_idx < num_neigh:
+                        if rand() / RAND_MAX > prob:
+                            neigh_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh_idx]
 
-                    self.neighbors[idx_subg][v].push_back(new_v)
-                    self.neighbors[idx_subg][new_v].push_back(v)
+                            for i in range(num_train_node):
+                                    if self.node_train_vec[i] == neigh_v:
+                                        break
+                            if counts[i] == self.max_degree:
+                                neigh_idx = neigh_idx + 1
+                                continue
+                            if counts[idx] == self.max_degree:
+                                break
+                            counts[idx] = counts[idx] + 1
+                            counts[i] = counts[i] + 1
 
-                    if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
-                            self.node_sampled[idx_subg].end():
-                        inode = inode + 1
-                        self.node_sampled[idx_subg].push_back(v)
+                            self.neighbors[idx_subg][v].push_back(neigh_v)
+                            self.neighbors[idx_subg][neigh_v].push_back(v)
 
-                    if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), new_v) == \
-                            self.node_sampled[idx_subg].end():
-                        inode = inode + 1
-                    self.node_sampled[idx_subg].push_back(new_v)
+                            if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
+                                    self.node_sampled[idx_subg].end():
+                                inode = inode + 1
 
-                    neigh = neigh + 1
+                            if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), neigh_v) == \
+                                    self.node_sampled[idx_subg].end():
+                                inode = inode + 1
+
+                            self.node_sampled[idx_subg].push_back(v)
+                            self.node_sampled[idx_subg].push_back(neigh_v)
+
+                        neigh_idx = neigh_idx + 1
 
             r = r + 1
             sort(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end())
