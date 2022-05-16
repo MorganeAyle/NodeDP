@@ -808,9 +808,9 @@ cdef class NodesUniformMaxDegree(MaxDegreeSampler):
                             self.neighbors[idx_subg][v].push_back(neigh_v)
                             self.neighbors[idx_subg][neigh_v].push_back(v)
 
-                            if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
-                                    self.node_sampled[idx_subg].end():
-                                inode = inode + 1
+                            # if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
+                            #         self.node_sampled[idx_subg].end():
+                            #     inode = inode + 1
 
                             if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), neigh_v) == \
                                     self.node_sampled[idx_subg].end():
