@@ -42,15 +42,20 @@ class Trainer:
             self.model.to('cuda')
 
         # Optimizer
-        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=training_args['lr'])
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=training_args['lr'])
+        if training_args['optim'].lower() == 'adam':
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=training_args['lr'])
+        elif training_args['optim'].lower() == 'sgd':
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=training_args['lr'])
+        else:
+            raise NotImplementedError
 
         # Get gradient norms
         if training_args['method'] == 'normal':
             self.clip_norm = training_args['clip_norm']
         if training_args['method'] in ['ours', 'node_dp_max_degree']:
             self.grad_norms = torch.tensor(self.estimate_init_grad_norms(*self.minibatch.sample_one_batch(out, mode='train')))
-            self.C = np.sqrt(sum(self.grad_norms ** 2))
+            self.C = training_args['C%'] * np.sqrt(sum(self.grad_norms ** 2))
+            self.grad_norms = training_args['C%'] * self.grad_norms
 
     def predict(self, preds):
         return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
@@ -81,7 +86,7 @@ class Trainer:
         self.optimizer.step()
         return loss, self.predict(preds), self.labels[nodes]
 
-    def dp_train_step(self, nodes, adj, roots=None, clip_norm=0.002, sigma=1.):
+    def dp_train_step(self, nodes, adj, roots=None, sigma=1.):
         self.model.train()
         self.optimizer.zero_grad()
 
@@ -124,34 +129,40 @@ class Trainer:
                 if self.use_cuda:
                     new_adj = new_adj.cuda()
 
-                self.optimizer.zero_grad()
-                preds = self.model(self.feats[walk_nodes], new_adj)
-                loss = self._loss(preds, self.labels[walk_nodes])
-                tmp = torch.autograd.grad(loss, list(self.model.parameters()), allow_unused=True)
-                total_norm = 0
-                for t in tmp:
-                    if t is not None:
-                        total_norm += t.norm() ** 2
-                tmpp = [t / max(1, torch.sqrt(total_norm) / clip_norm) for t in tmp if t is not None]
-                grads.append(tmpp)
-                total_loss += loss
-                total_preds.extend(preds)
-                total_labels.extend(self.labels[walk_nodes])
+                # compute gradient for each sample in walk and clip it
+                for inode, walk_node in enumerate(walk_nodes):
+                    if self.sampler_args["only_roots"] and walk_node not in roots:
+                        continue
+                    self.optimizer.zero_grad()
+                    preds = self.model(self.feats[walk_nodes], new_adj)
+                    pred, label = preds[inode].unsqueeze(0), self.labels[walk_node].unsqueeze(0)
+                    loss = self._loss(pred, label)
 
+                    model_grads = torch.autograd.grad(loss, list(self.model.parameters()), allow_unused=True)
+                    clipped_model_grads = []
+                    for ti, t in enumerate(model_grads):
+                        if t is not None:
+                            clipped_model_grads.append(t / max(1, t.norm() / self.grad_norms[ti]))
+
+                    grads.append(clipped_model_grads)
+                    total_loss += loss
+                    total_preds.extend(pred)
+                    total_labels.extend(label)
+
+        # sum al gradients and add noise
         grads = zip(*grads)
         new_grads = []
-        for shards in grads:
+        for i, shards in enumerate(grads):
             if shards[0] is not None:
                 grad_sum = torch.stack(shards).sum(0)
-                new_grads.append(grad_sum + torch.normal(torch.zeros_like(grad_sum),
-                                                         torch.ones_like(grad_sum) * (sigma * clip_norm) ** 2) / len(
-                    shards))
+                new_grads.append((grad_sum + torch.normal(torch.zeros_like(grad_sum),
+                                                         torch.ones_like(grad_sum) * (sigma * self.grad_norms[i]) ** 2)) / len(shards))
 
+        # set gradients of model to new gradients and do optimizer step
         for i, p in enumerate(self.model.parameters()):
             p.grad = new_grads[i]
-            if i == len(new_grads) - 1:
-                break
         self.optimizer.step()
+
         return total_loss, self.predict(torch.stack(total_preds)), torch.stack(total_labels)
 
     def dp_train_step_fast(self, nodes, adj, roots=None, sigma=1.):
