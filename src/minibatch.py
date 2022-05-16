@@ -1,8 +1,10 @@
 import pdb
 import time
+import random
+import copy
 
 from src.sampling.graph_samplers import DisjointRandomWalks, RandomWalks, NodesUniformMaxDegree
-from src.utils import adj_norm, adj_add_self_loops
+from src.utils import adj_norm, adj_add_self_loops, bound_adj_degree
 
 import numpy as np
 import torch
@@ -77,7 +79,18 @@ class Minibatch:
     def sample_subgraphs(self, out):
         out("Sampling subgraphs...")
         if self.sampler_method == 'drw':
+            new_adj = bound_adj_degree(copy.deepcopy(self.adj_train), self.sampler_args['max_degree'])
+            self.deg_train = np.array(adj_add_self_loops(new_adj).sum(1).flatten().tolist()[0])
+            self.graph_sampler = DisjointRandomWalks(
+                new_adj,
+                self.node_train,
+                int(self.sampler_args['num_root']),
+                int(self.sampler_args['depth']),
+                self.num_par_sampler,
+                self.samples_per_proc
+            )
             _indptr, _indices, _data, _v, _edge_index, _roots = self.graph_sampler.par_sample()
+
         else:
             _indptr, _indices, _data, _v, _edge_index = self.graph_sampler.par_sample()
         self.subgraphs_remaining_indptr.extend(_indptr)
@@ -121,7 +134,7 @@ class Minibatch:
 
             self.batch_num += 1
 
-            out("Number of nodes in batch:", adj.shape[0])
+            out("Number of nodes in batch: " + str(adj.shape[0]))
 
         if self.sampler_method == 'drw':
             return self.node_subgraph, adj, root_subgraph

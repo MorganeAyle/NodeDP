@@ -9,6 +9,15 @@ from sklearn.preprocessing import StandardScaler
 import scipy.sparse as sp
 import torch
 from math import comb
+import random
+
+
+def configure_seeds(seed, device):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if device == 'cuda':
+        torch.cuda.manual_seed_all(seed)
 
 
 def load_data(data_path, out):
@@ -90,3 +99,38 @@ def _coo_scipy2torch(adj):
 
 def compute_hypergeometric(N, d, m):
     return [comb(d, i) * comb(N - d, m - i) / comb(N, m) for i in range(d + 1)]
+
+
+def bound_adj_degree(adj, max_degree):
+    new_row = []
+    new_col = []
+    new_data = []
+    new_neigh = {v: [] for v in range(adj.shape[0])}
+
+    nodes = list(range(adj.shape[0]))
+    random.shuffle(nodes)
+    for v in nodes:
+        neigh_len = adj.indptr[v+1] - adj.indptr[v]
+        existing_neigh = new_neigh[v]
+        if len(existing_neigh) >= max_degree:
+            continue
+        else:
+            neigh_indices = list(range(neigh_len))
+            random.shuffle(neigh_indices)
+            for i in neigh_indices:
+                u = adj.indices[adj.indptr[v] + i]
+                if len(new_neigh[u]) >= max_degree:
+                    continue
+                if len(new_neigh[v]) >= max_degree:
+                    break
+                new_data.append(True)
+                new_row.append(v)
+                new_col.append(u)
+                new_data.append(True)
+                new_row.append(u)
+                new_col.append(v)
+                new_neigh[v].append(u)
+                new_neigh[u].append(v)
+    new_adj = sp.csr_matrix((new_data, (new_row, new_col)), shape=adj.shape)
+
+    return new_adj
