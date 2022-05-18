@@ -785,7 +785,10 @@ cdef class NodesUniformMaxDegree(MaxDegreeSampler):
                 if cutils.find(roots[idx_subg].begin(), roots[idx_subg].end(), v) != roots[idx_subg].end():
                     continue
                 roots[idx_subg].push_back(v)
-                inode = inode + 1
+                if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
+                                    self.node_sampled[idx_subg].end():
+                    inode = inode + 1
+                    self.node_sampled[idx_subg].push_back(v)
                 num_neigh = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
                 if num_neigh > 0:
                     prob = self.max_degree // (2 * num_neigh)
@@ -808,16 +811,10 @@ cdef class NodesUniformMaxDegree(MaxDegreeSampler):
                             self.neighbors[idx_subg][v].push_back(neigh_v)
                             self.neighbors[idx_subg][neigh_v].push_back(v)
 
-                            # if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
-                            #         self.node_sampled[idx_subg].end():
-                            #     inode = inode + 1
-
                             if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), neigh_v) == \
                                     self.node_sampled[idx_subg].end():
                                 inode = inode + 1
-
-                            self.node_sampled[idx_subg].push_back(v)
-                            self.node_sampled[idx_subg].push_back(neigh_v)
+                                self.node_sampled[idx_subg].push_back(neigh_v)
 
                         neigh_idx = neigh_idx + 1
 
