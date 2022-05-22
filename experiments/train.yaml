@@ -9,10 +9,10 @@ slurm:
   experiments_per_job: 1
   sbatch_options:
     gres: gpu:1       # num GPUs
-    mem: 16G          # memory
+    mem: 128G          # memory
     cpus-per-task: 1  # num cores
-    time: 0-4:00     # max time, D-HH:MM
-    partition: ['gpu_all']
+    time: 1-00:00     # max time, D-HH:MM
+    partition: ['gpu_large']
 #    qos: interactive
 
 ###### BEGIN PARAMETER CONFIGURATION ######
@@ -22,50 +22,78 @@ fixed:
   num_subgraphs: 200
   num_par_samplers: 10
   use_cuda: True
-  eval_every: 10
+  eval_every: 1
   num_iterations: 1000
+  seed: 1234
 
   sampler_args:
-    method: 'drw'
-    num_root: 300
-    depth: 3
-    only_roots: False
+#    method: 'drw'
+#    num_root: 2500
+#    depth: 2
+#    only_roots: True
+#    max_degree: 10
 
 #    method: 'rw'
 #    num_root: 500
 #    depth: 1
 #    only_roots: False
 
-#    method: 'nodes_max'
-#    num_nodes: 1000
-#    max_degree: 7
-#    only_roots: False
+    method: 'nodes_max'
+    num_nodes: 9200
+    max_degree: 7
+    only_roots: False
 
   model_args:
-    arch: 'GraphSAGE'
-    hidden_channels: 512
-    dropout: 0.1
-    num_layers: 1
-
 #    arch: 'GraphSAGE'
 #    hidden_channels: 512
 #    dropout: 0.1
-#    num_layers: 2
+#    num_layers: 1
+
+    arch: 'GCN2'
+    hidden_channels: 512
+    dropout: 0.1
+    num_layers: 2
+    activation: 'relu'
 
   training_args:
-    method: 'ours'
-    loss: 'softmax'
-    lr: 0.01
-    alpha: 2
-    delta: 1e-4
+#    method: 'ours'
+#    loss: 'softmax'
+##    distribution: 'hyper'
+#    lr: 0.01
+#    optim: 'Adam'
+#    C%: 0.75
+#    alpha: 2
+#    delta: 1e-4
 
 #    method: 'normal'
 #    loss: 'softmax'
 #    lr: 0.01
 #    clip_norm: 5
 
-#    method: 'node_dp_max_degree'
-#    loss: 'softmax'
-#    lr: 0.01
-#    alpha: 2
-#    delta: 1e-4
+    method: 'node_dp_max_degree'
+    loss: 'softmax'
+    distribution: 'hyper'
+    lr: 0.01
+    optim: 'Adam'
+    C%: 0.75
+    alpha: 2
+    delta: 1e-4
+
+#grid:
+#  sampler_args.max_degree:
+#    type: choice
+#    options:
+#      - 7
+#      - 10
+#
+#  sampler_args.only_roots:
+#    type: choice
+#    options:
+#      - True
+##      - False
+#
+#  training_args.distribution:
+#    type: choice
+#    options:
+#      - 'hyper'
+#      - 'ours'

@@ -61,7 +61,7 @@ class MLP(torch.nn.Module):
 
             if i < self.num_layers - 1:
                 x = self.act(x)
-                # x = F.dropout(x, p=self.dropout, training=self.training)
+                x = F.dropout(x, p=self.dropout, training=self.training)
         return x
 
 
@@ -103,7 +103,7 @@ class GCN(torch.nn.Module):
         for i, conv in enumerate(self.convs[:-1]):
             x = conv(x, adj)
             x = self.act(x)
-            # x = F.dropout(x, p=self.dropout, training=self.training)
+            x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, adj)
         x = F.normalize(x)
         return x
@@ -147,7 +147,7 @@ class GCN2(torch.nn.Module):
         for i, conv in enumerate(self.convs):
             x = conv(x, adj)
             x = self.act(x)
-            # x = F.dropout(x, p=self.dropout, training=self.training)
+            x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.linear(x)
         x = F.normalize(x)
         return x
@@ -193,7 +193,7 @@ class GraphSAGE(torch.nn.Module):
 
             if i < self.num_layers - 1:
                 x = self.act(x)
-                # x = F.dropout(x, p=self.dropout, training=self.training)
+                x = F.dropout(x, p=self.dropout, training=self.training)
         x = F.normalize(x)
         return x
 

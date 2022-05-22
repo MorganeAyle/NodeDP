@@ -89,7 +89,7 @@ def run(data_path, num_subgraphs, num_par_samplers, use_cuda, num_iterations, ev
         if training_args['method'] == 'normal':
             trainer.train_step(*minibatch.sample_one_batch(out))
         elif training_args['method'] in ['ours', 'node_dp_max_degree']:
-            trainer.dp_train_step(*minibatch.sample_one_batch(out), sigma=sigma_without_C)
+            trainer.dp_train_step_fast2(*minibatch.sample_one_batch(out), sigma=sigma_without_C)
 
             total_gamma += 1 / (training_args['alpha'] - 1) * np.log(sum(np.array([p * (
                 np.exp(training_args['alpha'] * (training_args['alpha'] - 1) * (i * sigma_without_K) ** 2 / (

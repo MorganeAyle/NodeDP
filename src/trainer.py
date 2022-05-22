@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 import collections
 import scipy
+from src import autograd_hacks
 
 from src.models import create_model
 from src.utils import _coo_scipy2torch
@@ -37,6 +38,8 @@ class Trainer:
         in_channels = self.feats.shape[1]
         out_channels = self.labels.shape[1]
         self.model = create_model(in_channels, out_channels, model_args)
+
+        autograd_hacks.add_hooks(self.model)
 
         if use_cuda:
             self.model.to('cuda')
@@ -171,17 +174,17 @@ class Trainer:
 
         self.fmodel, params, buffers = make_functional_with_buffers(self.model)
         ft_compute_grad = grad(self.compute_loss_stateless_model)
-        ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, None, None, 0, 0))
+        ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, None, None, 0, 0), randomness='same')
 
         if not (self.sampler_args["method"] == "drw" and self.sampler_args["only_roots"]):
-            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj.to_dense(),
+            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj,
                                                          self.labels[nodes], torch.arange(nodes.size))
         else:
             idx = []
             for i, v in enumerate(nodes):
                 if v in roots:
                     idx.append(i)
-            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj.to_dense(),
+            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj,
                                                          self.labels[nodes][idx], torch.arange(nodes.size)[idx])
 
         grads_norms = torch.zeros((ft_per_sample_grads[0].shape[0], self.grad_norms.shape[0]),
@@ -210,6 +213,54 @@ class Trainer:
 
         for i, p in enumerate(self.model.parameters()):
             p.grad = new_grads[i]
+        self.optimizer.step()
+
+    def dp_train_step_fast2(self, nodes, adj, roots=None, sigma=1.):
+        self.model.train()
+        self.optimizer.zero_grad()
+        autograd_hacks.clear_backprops(self.model)
+        if not (self.sampler_args["method"] == "drw" and self.sampler_args["only_roots"]):
+            preds = self.model(self.feats[nodes], adj)
+            self._loss(preds, self.labels[nodes]).backward(retain_graph=True)
+            num_nodes = len(nodes)
+            idx = list(range(len(nodes)))
+        else:
+            idx = []
+            for i, v in enumerate(nodes):
+                if v in roots:
+                    idx.append(i)
+            preds = self.model(self.feats[nodes], adj)
+            self._loss(preds[idx], self.labels[nodes][idx]).backward(retain_graph=True)
+            num_nodes = len(roots)
+        autograd_hacks.compute_grad1(self.model)
+
+        # for param in self.model.parameters():
+        #     print((param.grad1.mean(dim=0) - param.grad).norm())
+        #     assert (torch.allclose(param.grad1.mean(dim=0), param.grad))
+
+        grads_norms = torch.zeros((num_nodes, self.grad_norms.shape[0]))
+
+        for i, param in enumerate(self.model.parameters()):
+            param_grad = param.grad1.cpu()
+            grads_norms[:, i] = param_grad.norm(dim=tuple(np.arange(len(param_grad.shape))[1:]))[idx]
+
+        new_grads = []
+        for i, param in enumerate(self.model.parameters()):
+            param_grad = param.grad1.cpu()
+            denom = torch.maximum(torch.tensor([1] * len(grads_norms), device=grads_norms.device),
+                                  grads_norms[:, i].flatten() / self.grad_norms[i])
+            for _ in range(len(param_grad.shape) - 1):
+                denom = denom.unsqueeze(-1)
+
+            new_grad = param_grad[idx] / denom
+            new_grad = new_grad.sum(0)
+            mean = torch.zeros_like(new_grad)
+            std = torch.ones_like(new_grad) * (sigma * self.grad_norms[i]) ** 2
+            noise = torch.normal(mean, std)
+            new_grads.append((new_grad + noise) / len(grads_norms))
+
+        for i, p in enumerate(self.model.parameters()):
+            p.grad = new_grads[i].cuda()
         self.optimizer.step()
 
     def compute_loss_stateless_model(self, params, buffers, x, adj, target, idx):

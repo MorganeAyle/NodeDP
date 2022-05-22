@@ -8,6 +8,7 @@
 #SBATCH --mem=8G # the memory (MB) that is allocated to the job. If your job exceeds this it will be killed
 #SBATCH --qos=cpu # this qos ensures a very high priority but only one job per user can run under this mode.
 #SBATCH --cpus-per-task=1
+#SBATCH --exclude=mdsi-gpu01,mdsi-gpu02,gpu18,gpu19,gpu15,gpu16,gpu17
 
 cd ${SLURM_SUBMIT_DIR}
 echo Starting job ${SLURM_JOBID}
