@@ -56,7 +56,7 @@ class Trainer:
         if training_args['method'] == 'normal':
             self.clip_norm = training_args['clip_norm']
         if training_args['method'] in ['ours', 'node_dp_max_degree']:
-            self.grad_norms = torch.tensor(self.estimate_init_grad_norms(*self.minibatch.sample_one_batch(out, mode='train')))
+            self.grad_norms = self.estimate_init_grad_norms(*self.minibatch.sample_one_batch(out, mode='train'))
             self.C = training_args['C%'] * np.sqrt(sum(self.grad_norms ** 2))
             self.grad_norms = training_args['C%'] * self.grad_norms
 
@@ -73,10 +73,13 @@ class Trainer:
             return nn.CrossEntropyLoss(reduction='mean')(preds, labels)
 
     def estimate_init_grad_norms(self, nodes, adj, roots=None):
-        preds = self.model(self.feats[nodes], adj)
-        loss = self._loss(preds, self.labels[nodes])
-        grads = torch.autograd.grad(loss, list(self.model.parameters()))
-        return [grad.norm() for grad in grads]
+        grad_norms = []
+        for i in range(len(nodes)):
+            preds = self.model(self.feats[nodes], adj)
+            loss = self._loss(preds[i].unsqueeze(0), self.labels[nodes][i].unsqueeze(0))
+            grads = torch.autograd.grad(loss, list(self.model.parameters()))
+            grad_norms.append([grad.norm() for grad in grads])
+        return torch.tensor(grad_norms).mean(0)
 
     def train_step(self, nodes, adj, roots=None):
         self.model.train()
@@ -134,7 +137,7 @@ class Trainer:
 
                 # compute gradient for each sample in walk and clip it
                 for inode, walk_node in enumerate(walk_nodes):
-                    if self.sampler_args["only_roots"] and walk_node not in roots:
+                    if self.sampler_args["method"] in ["drw", "nodes_max"] and walk_node not in roots:
                         continue
                     self.optimizer.zero_grad()
                     preds = self.model(self.feats[walk_nodes], new_adj)
@@ -176,7 +179,7 @@ class Trainer:
         ft_compute_grad = grad(self.compute_loss_stateless_model)
         ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, None, None, 0, 0), randomness='same')
 
-        if not (self.sampler_args["method"] == "drw" and self.sampler_args["only_roots"]):
+        if not self.sampler_args["method"] in ["drw", "nodes_max"]:
             ft_per_sample_grads = ft_compute_sample_grad(params, buffers, self.feats[nodes], adj,
                                                          self.labels[nodes], torch.arange(nodes.size))
         else:
@@ -219,7 +222,7 @@ class Trainer:
         self.model.train()
         self.optimizer.zero_grad()
         autograd_hacks.clear_backprops(self.model)
-        if not (self.sampler_args["method"] == "drw" and self.sampler_args["only_roots"]):
+        if not self.sampler_args["method"] in ["drw", "nodes_max"]:
             preds = self.model(self.feats[nodes], adj)
             self._loss(preds, self.labels[nodes]).backward(retain_graph=True)
             num_nodes = len(nodes)

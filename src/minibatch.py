@@ -13,12 +13,13 @@ from src.utils import _coo_scipy2torch
 
 
 class Minibatch:
-    def __init__(self, adj_full, adj_train, role, num_par_sampler, samples_per_proc, use_cuda, sampler_args):
+    def __init__(self, adj_full, adj_train, role, num_par_sampler, samples_per_proc, use_cuda, sampler_args, model_args):
         self.num_par_sampler = num_par_sampler
         self.samples_per_proc = samples_per_proc
         self.use_cuda = use_cuda
         self.sampler_method = sampler_args["method"]
         self.sampler_args = sampler_args
+        self.model_args = model_args
         self.batch_num = 0
 
         self.node_train = np.array(role['tr'])
@@ -26,8 +27,10 @@ class Minibatch:
         self.node_test = np.array(role['te'])
 
         self.adj_full_norm_with_sl = _coo_scipy2torch(adj_norm(adj_add_self_loops(adj_full)).tocoo())
+        if self.sampler_method in ['drw', 'nodes_max']:
+            adj_train = bound_adj_degree(adj_train, self.sampler_args['max_degree'])
         self.adj_train = adj_train  # scipy sparse csr format
-        self.deg_train = np.array(adj_add_self_loops(adj_train).sum(1).flatten().tolist()[0])
+        self.deg_train = np.array(adj_add_self_loops(copy.deepcopy(adj_train)).sum(1).flatten().tolist()[0])
 
         self.subgraphs_remaining_indptr = []
         self.subgraphs_remaining_indices = []
@@ -69,7 +72,7 @@ class Minibatch:
                 self.adj_train,
                 self.node_train,
                 int(self.sampler_args['num_nodes']),
-                int(self.sampler_args['max_degree']),
+                int(self.model_args['num_layers']),
                 self.num_par_sampler,
                 self.samples_per_proc
             )
@@ -78,19 +81,9 @@ class Minibatch:
 
     def sample_subgraphs(self, out):
         out("Sampling subgraphs...")
-        if self.sampler_method == 'drw':
-            new_adj = bound_adj_degree(copy.deepcopy(self.adj_train), self.sampler_args['max_degree'])
-            self.deg_train = np.array(adj_add_self_loops(new_adj).sum(1).flatten().tolist()[0])
-            self.graph_sampler = DisjointRandomWalks(
-                new_adj,
-                self.node_train,
-                int(self.sampler_args['num_root']),
-                int(self.sampler_args['depth']),
-                self.num_par_sampler,
-                self.samples_per_proc
-            )
+        if self.sampler_method in ['drw', 'nodes_max']:
+        # if self.sampler_method in ['drw']:
             _indptr, _indices, _data, _v, _edge_index, _roots = self.graph_sampler.par_sample()
-
         else:
             _indptr, _indices, _data, _v, _edge_index = self.graph_sampler.par_sample()
         self.subgraphs_remaining_indptr.extend(_indptr)
@@ -98,7 +91,8 @@ class Minibatch:
         self.subgraphs_remaining_data.extend(_data)
         self.subgraphs_remaining_nodes.extend(_v)
         self.subgraphs_remaining_edge_index.extend(_edge_index)
-        if self.sampler_method == 'drw':
+        if self.sampler_method in ['drw', 'nodes_max']:
+        # if self.sampler_method in ['drw']:
             self.subgraphs_remaining_roots.extend(_roots)
         out(f"Done sampling {len(_indptr)} subgraphs.")
 
@@ -116,7 +110,8 @@ class Minibatch:
             self.node_subgraph = self.subgraphs_remaining_nodes.pop()
             self.size_subgraph = len(self.node_subgraph)
 
-            if self.sampler_method == 'drw':
+            if self.sampler_method in ['drw', 'nodes_max']:
+            # if self.sampler_method in ['drw']:
                 root_subgraph = self.subgraphs_remaining_roots.pop()
 
             adj = sp.csr_matrix(
@@ -124,7 +119,7 @@ class Minibatch:
                     self.subgraphs_remaining_data.pop(),
                     self.subgraphs_remaining_indices.pop(),
                     self.subgraphs_remaining_indptr.pop()),
-                    shape=(self.size_subgraph,self.size_subgraph,
+                    shape=(self.size_subgraph, self.size_subgraph,
                 )
             )
             adj = _coo_scipy2torch(adj_norm(adj_add_self_loops(adj), self.deg_train[self.node_subgraph]).tocoo())
@@ -136,6 +131,7 @@ class Minibatch:
 
             out("Number of nodes in batch: " + str(adj.shape[0]))
 
-        if self.sampler_method == 'drw':
+        if self.sampler_method in ['drw', 'nodes_max']:
+        # if self.sampler_method in ['drw']:
             return self.node_subgraph, adj, root_subgraph
         return self.node_subgraph, adj

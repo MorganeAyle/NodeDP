@@ -53,9 +53,9 @@ class DisjointRandomWalks(GraphSampler):
 
 
 class NodesUniformMaxDegree(GraphSampler):
-    def __init__(self, adj_train, node_train, size_nodes, max_degree, num_par_sampler, samples_per_proc):
+    def __init__(self, adj_train, node_train, size_nodes, num_layers, num_par_sampler, samples_per_proc):
         self.size_nodes = size_nodes
-        self.max_degree = max_degree
+        self.num_layers = num_layers
         super().__init__(adj_train, node_train)
         self.cy_sampler = cy.NodesUniformMaxDegree(
             self.adj_train.indptr,
@@ -64,7 +64,7 @@ class NodesUniformMaxDegree(GraphSampler):
             num_par_sampler,
             samples_per_proc,
             self.size_nodes,
-            self.max_degree
+            self.num_layers
         )
 
 

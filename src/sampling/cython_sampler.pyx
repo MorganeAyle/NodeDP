@@ -229,12 +229,14 @@ cdef class Sampler(BaseSampler):
 
 cdef class MaxDegreeSampler(BaseSampler):
     cdef vector[vector[vector[int]]] neighbors
+    cdef vector[vector[int]] root_sampled
     def __cinit__(self, np.ndarray[int, ndim=1, mode='c'] adj_indptr,
                   np.ndarray[int, ndim=1, mode='c'] adj_indices,
                   np.ndarray[int, ndim=1, mode='c'] node_train,
                   int num_proc, int num_sample_per_proc, *argv):
         cdef int num_v_orig
         num_v_orig = self.adj_indptr_vec.size() - 1
+        self.root_sampled = vector[vector[int]](num_proc * num_sample_per_proc)
         self.neighbors = vector[vector[vector[int]]](num_proc * num_sample_per_proc, vector[vector[int]](num_v_orig))
 
     cdef void adj_extract(self, int p) nogil:
@@ -274,7 +276,7 @@ cdef class MaxDegreeSampler(BaseSampler):
                 end_neigh = self.adj_indptr_vec[v + 1]
                 j = start_neigh
                 while j < end_neigh:  # iterate over ALL neighbors of the node
-                    found = False#
+                    found = False
                     for k in self.neighbors[idx_g][v]:
                         if k == self.adj_indices_vec[j]:
                             found = True
@@ -313,24 +315,29 @@ cdef class MaxDegreeSampler(BaseSampler):
         l_subg_indices = []
         l_subg_data = []
         l_subg_nodes = []
+        l_subg_roots = []
         l_subg_edge_index = []
         offset_nodes = [0]
+        offset_roots = [0]
         offset_indptr = [0]
         offset_indices = [0]
         offset_data = [0]
         offset_edge_index = [0]
         for r in range(num_subg):
             offset_nodes.append(offset_nodes[r]+self.node_sampled[r].size())
+            offset_roots.append(offset_roots[r] + self.root_sampled[r].size())
             offset_indptr.append(offset_indptr[r]+self.ret_indptr[r].size())
             offset_indices.append(offset_indices[r]+self.ret_indices[r].size())
             offset_data.append(offset_data[r]+self.ret_data[r].size())
             offset_edge_index.append(offset_edge_index[r]+self.ret_edge_index[r].size())
         cdef vector[int] ret_nodes_vec = vector[int]()
+        cdef vector[int] ret_roots_vec = vector[int]()
         cdef vector[int] ret_indptr_vec = vector[int]()
         cdef vector[int] ret_indices_vec = vector[int]()
         cdef vector[int] ret_edge_index_vec = vector[int]()
         cdef vector[float] ret_data_vec = vector[float]()
         ret_nodes_vec.reserve(offset_nodes[num_subg])
+        ret_roots_vec.reserve(offset_roots[num_subg])
         ret_indptr_vec.reserve(offset_indptr[num_subg])
         ret_indices_vec.reserve(offset_indices[num_subg])
         ret_data_vec.reserve(offset_data[num_subg])
@@ -339,6 +346,7 @@ cdef class MaxDegreeSampler(BaseSampler):
             # if type(self) is RW_NO:
             #     ret_nodes_vec.insert(ret_nodes_vec.end(), self.root_sampled[r].begin(), self.root_sampled[r].end())
             ret_nodes_vec.insert(ret_nodes_vec.end(),self.node_sampled[r].begin(),self.node_sampled[r].end())
+            ret_roots_vec.insert(ret_roots_vec.end(), self.root_sampled[r].begin(), self.root_sampled[r].end())
             ret_indptr_vec.insert(ret_indptr_vec.end(),self.ret_indptr[r].begin(),self.ret_indptr[r].end())
             ret_indices_vec.insert(ret_indices_vec.end(),self.ret_indices[r].begin(),self.ret_indices[r].end())
             ret_edge_index_vec.insert(ret_edge_index_vec.end(),self.ret_edge_index[r].begin(),self.ret_edge_index[r].end())
@@ -347,6 +355,7 @@ cdef class MaxDegreeSampler(BaseSampler):
         cdef cutils.array_wrapper_int wint_indptr = cutils.array_wrapper_int()
         cdef cutils.array_wrapper_int wint_indices = cutils.array_wrapper_int()
         cdef cutils.array_wrapper_int wint_nodes = cutils.array_wrapper_int()
+        cdef cutils.array_wrapper_int wint_roots = cutils.array_wrapper_int()
         cdef cutils.array_wrapper_float wfloat_data = cutils.array_wrapper_float()
         cdef cutils.array_wrapper_int wint_edge_index = cutils.array_wrapper_int()
 
@@ -356,6 +365,8 @@ cdef class MaxDegreeSampler(BaseSampler):
         ret_indices_np = np.frombuffer(wint_indices,dtype=np.int32)
         wint_nodes.set_data(ret_nodes_vec)
         ret_nodes_np = np.frombuffer(wint_nodes,dtype=np.int32)
+        wint_roots.set_data(ret_roots_vec)
+        ret_roots_np = np.frombuffer(wint_roots, dtype=np.int32)
         wfloat_data.set_data(ret_data_vec)
         ret_data_np = np.frombuffer(wfloat_data,dtype=np.float32)
         wint_edge_index.set_data(ret_edge_index_vec)
@@ -363,12 +374,13 @@ cdef class MaxDegreeSampler(BaseSampler):
 
         for r in range(num_subg):
             l_subg_nodes.append(ret_nodes_np[offset_nodes[r]:offset_nodes[r+1]])
+            l_subg_roots.append(ret_roots_np[offset_roots[r]:offset_roots[r + 1]])
             l_subg_indptr.append(ret_indptr_np[offset_indptr[r]:offset_indptr[r+1]])
             l_subg_indices.append(ret_indices_np[offset_indices[r]:offset_indices[r+1]])
             l_subg_data.append(ret_data_np[offset_data[r]:offset_data[r+1]])
             l_subg_edge_index.append(ret_edge_index_np[offset_indices[r]:offset_indices[r+1]])
 
-        return l_subg_indptr,l_subg_indices,l_subg_data,l_subg_nodes,l_subg_edge_index
+        return l_subg_indptr,l_subg_indices,l_subg_data,l_subg_nodes,l_subg_edge_index, l_subg_roots
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -405,6 +417,7 @@ cdef class MaxDegreeSampler(BaseSampler):
         ret = self.get_return()
         _len = self.num_proc*self.num_sample_per_proc
         self.node_sampled.swap(vector[vector[int]](_len))
+        self.root_sampled.swap(vector[vector[int]](_len))
         self.ret_indptr.swap(vector[vector[int]](_len))
         self.ret_indices.swap(vector[vector[int]](_len))
         self.ret_indices_orig.swap(vector[vector[int]](_len))
@@ -700,66 +713,35 @@ cdef class DisjointRW(SamplerNO):
 
 cdef class NodesUniformMaxDegree(MaxDegreeSampler):
     cdef int size_subgraph
-    cdef int max_degree
+    cdef int num_layers
+    cdef vector[int] neighborhood
     def __cinit__(self, np.ndarray[int,ndim=1,mode='c'] adj_indptr,
                         np.ndarray[int,ndim=1,mode='c'] adj_indices,
                         np.ndarray[int,ndim=1,mode='c'] node_train,
                         int num_proc, int num_sample_per_proc,
-                        int size_subgraph, int max_degree):
+                        int size_subgraph, int num_layers):
         self.size_subgraph = size_subgraph
-        self.max_degree = max_degree
+        self.num_layers = num_layers
 
-    # cdef void sample(self, int p) nogil:
-    #     cdef int inode = 0
-    #     cdef int neigh_indices = 0
-    #     cdef int r = 0
-    #     cdef int idx_subg
-    #     cdef int v
-    #     cdef int num_train_node = self.node_train_vec.size()
-    #     cdef vector[int] counts
-    #     cdef int neigh
-    #     while r < self.num_sample_per_proc:
-    #         idx_subg = p*self.num_sample_per_proc+r
-    #         counts = vector[int](num_train_node, 0)
-    #         inode = 0
-    #         while inode < self.size_subgraph:
-    #             idx = rand()%num_train_node
-    #             if counts[idx] == self.max_degree:
-    #                 continue
-    #             v = self.node_train_vec[idx]
-    #             neigh_indices = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
-    #             neigh = 0
-    #             while neigh < neigh_indices:
-        #                 new_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh]
-    #                 for i in range(num_train_node):
-    #                     if self.node_train_vec[i] == new_v:
-    #                         break
-    #                 if counts[i] == self.max_degree:
-    #                     neigh = neigh + 1
-    #                     continue
-    #                 if counts[idx] == self.max_degree:
-    #                     break
-    #                 counts[idx] = counts[idx] + 1
-    #                 counts[i] = counts[i] + 1
-    #
-    #                 self.neighbors[idx_subg][v].push_back(new_v)
-    #                 self.neighbors[idx_subg][new_v].push_back(v)
-    #
-    #                 if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
-    #                         self.node_sampled[idx_subg].end():
-    #                     inode = inode + 1
-    #                     self.node_sampled[idx_subg].push_back(v)
-    #
-    #                 if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), new_v) == \
-    #                         self.node_sampled[idx_subg].end():
-    #                     inode = inode + 1
-    #                 self.node_sampled[idx_subg].push_back(new_v)
-    #
-    #                 neigh = neigh + 1
-    #
-    #         r = r + 1
-    #         sort(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end())
-    #         self.node_sampled[idx_subg].erase(unique(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end()),self.node_sampled[idx_subg].end())
+    cdef void dfs(self, int v, int depth, int num_train_node) nogil:
+        cdef int neigh_idx
+        cdef int num_neigh
+        cdef int i
+
+        for i in range(num_train_node):
+            if self.node_train_vec[i] == v:
+                break
+        self.neighborhood[i] = 1
+        if depth == 0:
+            return
+        num_neigh = self.adj_indptr_vec[v + 1] - self.adj_indptr_vec[v]
+        for neigh_idx in range(num_neigh):
+            neigh_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh_idx]
+            for j in range(num_train_node):
+                if self.node_train_vec[j] == neigh_v:
+                    break
+            if not self.neighborhood[j]:
+                self.dfs(neigh_v, depth-1, num_train_node)
 
     cdef void sample(self, int p) nogil:
         cdef int inode = 0
@@ -768,55 +750,38 @@ cdef class NodesUniformMaxDegree(MaxDegreeSampler):
         cdef int idx_subg
         cdef int v
         cdef int num_train_node = self.node_train_vec.size()
-        cdef vector[int] counts
+        cdef int idx
+        cdef int i
         cdef int neigh_idx
-        cdef int prob
+        cdef int neigh_v
         cdef vector[vector[int]] roots
-        roots = vector[vector[int]](self.num_proc*self.num_sample_per_proc, vector[int](num_train_node))
+        roots = vector[vector[int]](self.num_proc*self.num_sample_per_proc)
+        cdef vector[int] neighbors
+        cdef vector[int] remaining_root
+
 
         while r < self.num_sample_per_proc:
             idx_subg = p*self.num_sample_per_proc+r
-            counts = vector[int](num_train_node, 0)
 
             inode = 0
+            remaining_root = vector[int](num_train_node, 0)
+            for i in range(num_train_node):
+                remaining_root[i] = self.node_train_vec[i]
             while inode < self.size_subgraph:
-                idx = rand()%num_train_node
-                v = self.node_train_vec[idx]
-                if cutils.find(roots[idx_subg].begin(), roots[idx_subg].end(), v) != roots[idx_subg].end():
-                    continue
-                roots[idx_subg].push_back(v)
-                if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), v) == \
-                                    self.node_sampled[idx_subg].end():
-                    inode = inode + 1
-                    self.node_sampled[idx_subg].push_back(v)
-                num_neigh = self.adj_indptr_vec[v+1]-self.adj_indptr_vec[v]
-                if num_neigh > 0:
-                    prob = self.max_degree // (2 * num_neigh)
-                    neigh_idx = 0
-                    while neigh_idx < num_neigh:
-                        if rand() / RAND_MAX > prob:
-                            neigh_v = self.adj_indices_vec[self.adj_indptr_vec[v]+neigh_idx]
+                idx = rand()%remaining_root.size()
+                v = remaining_root[idx]
+                self.node_sampled[idx_subg].push_back(v)
+                remaining_root.erase(remaining_root.begin() + idx)
+                self.root_sampled[idx_subg].push_back(v)
+                inode += 1
 
-                            for i in range(num_train_node):
-                                    if self.node_train_vec[i] == neigh_v:
-                                        break
-                            if counts[i] == self.max_degree:
-                                neigh_idx = neigh_idx + 1
-                                continue
-                            if counts[idx] == self.max_degree:
-                                break
-                            counts[idx] = counts[idx] + 1
-                            counts[i] = counts[i] + 1
-
-                            self.neighbors[idx_subg][v].push_back(neigh_v)
-                            self.neighbors[idx_subg][neigh_v].push_back(v)
-
-                            if cutils.find(self.node_sampled[idx_subg].begin(), self.node_sampled[idx_subg].end(), neigh_v) == \
-                                    self.node_sampled[idx_subg].end():
-                                inode = inode + 1
-                                self.node_sampled[idx_subg].push_back(neigh_v)
-
-                        neigh_idx = neigh_idx + 1
+                self.neighborhood = vector[int](num_train_node, 0)
+                self.dfs(v, self.num_layers, num_train_node)
+                for i in range(num_train_node):
+                    neigh_v = self.node_train_vec[i]
+                    if self.neighborhood[i] == 1 and neigh_v != v:
+                        self.node_sampled[idx_subg].push_back(neigh_v)
+                        self.neighbors[idx_subg][v].push_back(neigh_v)
 
             r = r + 1
             sort(self.node_sampled[idx_subg].begin(),self.node_sampled[idx_subg].end())
