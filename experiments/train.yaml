@@ -9,91 +9,52 @@ slurm:
   experiments_per_job: 1
   sbatch_options:
     gres: gpu:1       # num GPUs
-    mem: 128G          # memory
+    mem: 16G          # memory
     cpus-per-task: 1  # num cores
     time: 1-00:00     # max time, D-HH:MM
-    partition: ['gpu_large']
+    partition: ['gpu_all']
 #    qos: interactive
 
 ###### BEGIN PARAMETER CONFIGURATION ######
 
 fixed:
   data_path: './data/ogbn-arxiv_undirected'
-  num_subgraphs: 200
-  num_par_samplers: 10
   use_cuda: True
-  eval_every: 1
+  eval_every: 20
   num_iterations: 1000
-  seed: 1234
+#  seed: 1234
 
   sampler_args:
-#    method: 'drw'
-#    num_root: 2500
-#    depth: 2
-#    only_roots: True
-#    max_degree: 10
-
-#    method: 'rw'
-#    num_root: 500
-#    depth: 1
-#    only_roots: False
-
-    method: 'nodes_max'
-    num_nodes: 9200
-    max_degree: 7
-    only_roots: False
+    method: 'baseline'  # options: {rw, drw, pre_drw, baseline}
+    num_root: 5000
+    depth: 2
+    max_degree: 2
+#    restarts: 2
 
   model_args:
-#    arch: 'GraphSAGE'
-#    hidden_channels: 512
-#    dropout: 0.1
-#    num_layers: 1
-
-    arch: 'GCN2'
-    hidden_channels: 512
-    dropout: 0.1
+    arch: 'GCN'
+    hidden_channels: 256
+    dropout: 0.0
     num_layers: 2
     activation: 'relu'
 
   training_args:
-#    method: 'ours'
-#    loss: 'softmax'
-##    distribution: 'hyper'
-#    lr: 0.01
-#    optim: 'Adam'
-#    C%: 0.75
-#    alpha: 2
-#    delta: 1e-4
-
-#    method: 'normal'
-#    loss: 'softmax'
-#    lr: 0.01
-#    clip_norm: 5
-
-    method: 'node_dp_max_degree'
+    accountant: 'baseline'  # options: {none, baseline, std, sub_rdp}
     loss: 'softmax'
-    distribution: 'hyper'
     lr: 0.01
     optim: 'Adam'
-    C%: 0.75
+    early_stopping_after: 10
+    C%: 0.3
     alpha: 2
-    delta: 1e-4
+    delta: 1e-6
+    max_eps: 20
+    sigma: None
 
-#grid:
-#  sampler_args.max_degree:
-#    type: choice
-#    options:
-#      - 7
-#      - 10
-#
-#  sampler_args.only_roots:
-#    type: choice
-#    options:
-#      - True
-##      - False
-#
-#  training_args.distribution:
-#    type: choice
-#    options:
-#      - 'hyper'
-#      - 'ours'
+grid:
+
+  seed:
+    type: choice
+    options:
+      - 1234
+#      - 2345
+#      - 3456

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" host="fs.kdd.in.tum.de" id="c3e42397-24ea-4c06-8bc4-c71208ea3978" port="22" nameFormat="DESCRIPTIVE" username="ayle" useOpenSSHConfig="true" />
+    </configs>
+  </component>
+</project>

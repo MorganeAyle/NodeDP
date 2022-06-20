@@ -1,3 +1,5 @@
+import copy
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -16,9 +18,10 @@ def to_numpy(x):
 
 
 class Evaluator:
-    def __init__(self, model_args, feats, class_arr, loss):
+    def __init__(self, model_args, feats, class_arr, loss, early_stopping_after):
         self.feats = torch.from_numpy(feats.astype(np.float32))
         self.labels = torch.from_numpy(class_arr.astype(np.float32))
+        self.early_stopping_after = early_stopping_after
 
         # Loss type
         if loss == 'sigmoid':
@@ -31,6 +34,11 @@ class Evaluator:
         in_channels = self.feats.shape[1]
         out_channels = self.labels.shape[1]
         self.model = create_model(in_channels, out_channels, model_args)
+
+        self.metrics = None
+        self.best_metric = None
+        self.count = 0
+        self.best_model = None
 
     def predict(self, preds):
         return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
@@ -58,4 +66,32 @@ class Evaluator:
         }
         if not self.sigmoid_loss:
             ret["Accuracy"] = metrics.accuracy_score(y_true, y_pred)
+
+        self.metrics = ret
         return ret
+
+    @property
+    def early_stopping(self) -> bool:
+        """
+        Keeps track of the best metric for the corresponding loss and returns True if early stopping needed.
+        """
+        if not self.sigmoid_loss:
+            metric = self.metrics["Accuracy"]
+        else:
+            metric = self.metrics["F1 Macro"]
+
+        if self.best_metric is None:
+            self.best_metric = metric
+            self.best_model = copy.deepcopy(self.model)
+            return False
+        elif metric > self.best_metric:
+            self.best_metric = metric
+            self.best_model = copy.deepcopy(self.model)
+            self.count = 0
+            return False
+        else:
+            self.count += 1
+            if self.count >= self.early_stopping_after:
+                return True
+            else:
+                return False

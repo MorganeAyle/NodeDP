@@ -1,7 +1,4 @@
 import copy
-import pdb
-import time
-
 import scipy
 import numpy as np
 import json
@@ -10,6 +7,7 @@ import scipy.sparse as sp
 import torch
 from math import comb
 import random
+import networkx as nx
 
 
 def configure_seeds(seed, device):
@@ -38,14 +36,13 @@ def load_data(data_path, out):
     class_map = {int(k): v for k, v in class_map.items()}
     assert len(class_map) == feats.shape[0]
 
-    # ---- normalize feats ----
+    # normalize features
     out("Normalizing data...")
     train_nodes = np.array(list(set(adj_train.nonzero()[0])))
     train_feats = feats[train_nodes]
     scaler = StandardScaler()
     scaler.fit(train_feats)
     feats = scaler.transform(feats)
-    # -------------------------
 
     num_vertices = adj_full.shape[0]
     if isinstance(list(class_map.values())[0], list):
@@ -57,17 +54,10 @@ def load_data(data_path, out):
         num_classes = max(class_map.values()) - min(class_map.values()) + 1
         class_arr = np.zeros((num_vertices, num_classes))
         offset = min(class_map.values())
-        for k,v in class_map.items():
-            class_arr[k][v-offset] = 1
+        for k, v in class_map.items():
+            class_arr[k][v - offset] = 1
     out("Done loading data.")
     return adj_full, adj_train, feats, class_arr, role
-
-
-def define_additional_args(num_subgraphs, num_par_samplers, out):
-    assert num_subgraphs % num_par_samplers == 0
-    num_subgraphs_per_sampler = num_subgraphs // num_par_samplers
-    out(f"Number of subgraphs per sampler: {num_subgraphs_per_sampler}")
-    return num_subgraphs_per_sampler
 
 
 def adj_add_self_loops(adj):
@@ -79,11 +69,14 @@ def adj_add_self_loops(adj):
 def adj_norm(adj, deg=None, sort_indices=True):
     diag_shape = (adj.shape[0], adj.shape[1])
     D = adj.sum(1).flatten().squeeze() if deg is None else deg
-    norm_diag = sp.dia_matrix((1/D, 0), shape=diag_shape)
-    adj_norm = norm_diag.dot(adj)
+    # D[D == 0.] = 1.
+    # norm_diag = sp.dia_matrix((1 / D, 0), shape=diag_shape)
+    norm_diag = sp.dia_matrix((1 / np.sqrt(D), 0), shape=diag_shape)
+    # adj_norm = norm_diag.dot(adj)
+    normalized_adj = norm_diag.dot(adj).dot(norm_diag)
     if sort_indices:
-        adj_norm.sort_indices()
-    return adj_norm
+        normalized_adj.sort_indices()
+    return normalized_adj
 
 
 def _coo_scipy2torch(adj):
@@ -94,7 +87,7 @@ def _coo_scipy2torch(adj):
     indices = np.vstack((adj.row, adj.col))
     i = torch.LongTensor(indices)
     v = torch.FloatTensor(values)
-    return torch.sparse.FloatTensor(i,v, torch.Size(adj.shape))
+    return torch.sparse.FloatTensor(i, v, torch.Size(adj.shape))
 
 
 def compute_hypergeometric(N, d, m):
@@ -110,7 +103,7 @@ def bound_adj_degree(adj, max_degree):
     nodes = list(range(adj.shape[0]))
     random.shuffle(nodes)
     for v in nodes:
-        neigh_len = adj.indptr[v+1] - adj.indptr[v]
+        neigh_len = adj.indptr[v + 1] - adj.indptr[v]
         existing_neigh = new_neigh[v]
         if len(existing_neigh) >= max_degree:
             continue
@@ -134,3 +127,71 @@ def bound_adj_degree(adj, max_degree):
     new_adj = sp.csr_matrix((new_data, (new_row, new_col)), shape=adj.shape)
 
     return new_adj
+
+
+def sample_rws(adj, nodes, depth):
+    rws = {}
+    G = nx.from_scipy_sparse_matrix(adj)
+    tot_num_nodes = len(nodes)
+    nodes = list(nodes)
+    random.shuffle(nodes)
+    sampled_nodes = set()
+    sampled_roots = []
+
+    while len(sampled_nodes) != tot_num_nodes:
+        root = nodes.pop()
+        while root in sampled_nodes:
+            root = nodes.pop()
+        sampled_roots.append(root)
+        sampled_nodes.add(root)
+        rw = [root]
+        node = copy.deepcopy(root)
+        for _ in range(depth):
+            valid_neighbors = [v for v in G.neighbors(node) if v not in sampled_nodes]
+            if len(valid_neighbors):
+                neighbor = random.choice(valid_neighbors)
+                rw.append(neighbor)
+                sampled_nodes.add(neighbor)
+                node = copy.deepcopy(neighbor)
+            else:
+                break
+        rws[root] = rw
+
+    return rws, sampled_roots
+
+
+def sample_rws_w_restarts(adj, nodes, depth, restarts):
+    rws = {}
+    edges = {}
+    G = nx.from_scipy_sparse_matrix(adj)
+    tot_num_nodes = len(nodes)
+    nodes = list(nodes)
+    random.shuffle(nodes)
+    sampled_nodes = set()
+    sampled_roots = []
+
+    while len(sampled_nodes) != tot_num_nodes:
+        root = nodes.pop()
+        while root in sampled_nodes:
+            root = nodes.pop()
+        sampled_roots.append(root)
+        sampled_nodes.add(root)
+        rw = [root]
+        redges = []
+        for _ in range(restarts):
+            node = copy.deepcopy(root)
+            for _ in range(depth):
+                valid_neighbors = [v for v in G.neighbors(node) if v not in sampled_nodes]
+                if len(valid_neighbors):
+                    neighbor = random.choice(valid_neighbors)
+                    rw.append(neighbor)
+                    sampled_nodes.add(neighbor)
+                    redges.append((node, neighbor))
+                    redges.append((neighbor, node))
+                    node = copy.deepcopy(neighbor)
+                else:
+                    break
+        rws[root] = rw
+        edges[root] = redges
+
+    return rws, edges, sampled_roots

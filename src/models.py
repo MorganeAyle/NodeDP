@@ -1,5 +1,3 @@
-import pdb
-
 import torch
 import torch.nn.functional as F
 from torch.nn import Linear
@@ -11,7 +9,7 @@ def create_model(in_channels, out_channels, model_args):
                     model_args['dropout'], model_args['activation'])
     elif model_args['arch'] == 'GCN2':
         model = GCN2(in_channels, model_args['hidden_channels'], out_channels, model_args['num_layers'],
-                    model_args['dropout'], model_args['activation'])
+                     model_args['dropout'], model_args['activation'])
     elif model_args['arch'] == 'GraphSAGE':
         model = GraphSAGE(in_channels, model_args['hidden_channels'], out_channels, model_args['num_layers'],
                           model_args['dropout'], model_args['activation'])
@@ -55,7 +53,7 @@ class MLP(torch.nn.Module):
 
         self.act = get_activation(activation)
 
-    def forward(self, x, adj, root_subgraph=None):
+    def forward(self, x, adj):
         for i in range(self.num_layers):
             x = self.linears[i](x)
 
@@ -90,16 +88,20 @@ class GCN(torch.nn.Module):
         super().__init__()
 
         self.convs = torch.nn.ModuleList()
-        self.convs.append(GCNConv(in_channels, hidden_channels))
-        for _ in range(num_layers - 2):
+        if num_layers == 1:
+            self.convs.append(GCNConv(in_channels, out_channels))
+        else:
+            self.convs.append(GCNConv(in_channels, hidden_channels))
+        for _ in range(max(num_layers - 2, 0)):
             self.convs.append(GCNConv(hidden_channels, hidden_channels))
-        self.convs.append(GCNConv(hidden_channels, out_channels))
+        if num_layers > 1:
+            self.convs.append(GCNConv(hidden_channels, out_channels))
 
         self.dropout = dropout
 
         self.act = get_activation(activation)
 
-    def forward(self, x, adj, roots=None):
+    def forward(self, x, adj):
         for i, conv in enumerate(self.convs[:-1]):
             x = conv(x, adj)
             x = self.act(x)
@@ -143,7 +145,7 @@ class GCN2(torch.nn.Module):
 
         self.dropout = dropout
 
-    def forward(self, x, adj, roots=None):
+    def forward(self, x, adj):
         for i, conv in enumerate(self.convs):
             x = conv(x, adj)
             x = self.act(x)
@@ -184,7 +186,7 @@ class GraphSAGE(torch.nn.Module):
 
         self.act = get_activation(activation)
 
-    def forward(self, x, adj, roots=None):
+    def forward(self, x, adj):
         for i in range(self.num_layers):
             agg = self.aggregators[i](self._spmm(x, adj))
             agg = self.act(agg)

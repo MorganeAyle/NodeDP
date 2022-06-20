@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="04e2dcc5-5836-4da3-904b-21a0b7dc9906" name="daml">
+        <fileTransfer rootFolder="/nfs/homedirs/ayle" accessType="SFTP" host="fs.kdd.in.tum.de" port="22" sshConfigId="c3e42397-24ea-4c06-8bc4-c71208ea3978" sshConfig="ayle@fs.kdd.in.tum.de:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
