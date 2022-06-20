@@ -53,11 +53,14 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
     else:
         raise NotImplementedError
 
-    t1 = time.time()
     it = 1
+    all_metrics = []
+    all_epsilons = []
+    t1 = time.time()
     while it <= num_iterations or (sampler_args['method'] in DP_METHODS and
                                    accountant.epsilon < training_args["max_eps"]):
 
+        # Training
         if sampler_args['method'] in NON_DP_METHODS:
             trainer.train_step(*minibatch.sample_one_batch(out))
 
@@ -69,11 +72,13 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
             accountant.one_step()
             trainer.dp_train_step_fast(*minibatch.sample_one_batch(out), sigma=accountant.sigma)
 
+        # Evaluating
         if it % eval_every == 0:
             t2 = time.time()
             evaluator.model.load_state_dict(trainer.model.state_dict())
             preds, labels = evaluator.eval_step(*minibatch.sample_one_batch(out, mode='val'))
             metrics = evaluator.calc_metrics(preds, labels)
+            all_metrics.append(metrics)
 
             # Log results
             print_statement = f"Iteration {it}:"
@@ -84,12 +89,14 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
 
             if accountant is not None:
                 accountant.log(out)
-            t1 = time.time()
+                all_epsilons.append(accountant.epsilon)
+                evaluator.eps = accountant.epsilon
 
-            evaluator.eps = accountant.epsilon
             if evaluator.early_stopping:
                 out("Early stopping...")
                 break
+
+            t1 = time.time()
         it += 1
 
     # Final metrics
@@ -102,5 +109,7 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
         results['gho'] = accountant.distribution
         results['C'] = trainer.C.detach().cpu().numpy()
         results['eps'] = evaluator.best_eps
+        results['all_metrics'] = all_metrics
+        results['all_eps'] = all_epsilons
 
     return results
