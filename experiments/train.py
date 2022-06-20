@@ -86,6 +86,7 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
                 accountant.log(out)
             t1 = time.time()
 
+            evaluator.eps = accountant.epsilon
             if evaluator.early_stopping:
                 out("Early stopping...")
                 break
@@ -100,8 +101,6 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
     if sampler_args['method'] in DP_METHODS:
         results['gho'] = accountant.distribution
         results['C'] = trainer.C.detach().cpu().numpy()
-        if training_args['accountant'] in RDP_ACCOUNTANT:
-            results['gamma'] = accountant.gamma
-        results['eps'] = accountant.epsilon
+        results['eps'] = evaluator.best_eps
 
     return results

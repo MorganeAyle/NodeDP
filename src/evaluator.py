@@ -39,6 +39,8 @@ class Evaluator:
         self.best_metric = None
         self.count = 0
         self.best_model = None
+        self.eps = 0
+        self.best_eps = 0
 
     def predict(self, preds):
         return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
@@ -83,11 +85,13 @@ class Evaluator:
         if self.best_metric is None:
             self.best_metric = metric
             self.best_model = copy.deepcopy(self.model)
+            self.best_eps = self.eps
             return False
         elif metric > self.best_metric:
             self.best_metric = metric
             self.best_model = copy.deepcopy(self.model)
             self.count = 0
+            self.best_eps = self.eps
             return False
         else:
             self.count += 1
