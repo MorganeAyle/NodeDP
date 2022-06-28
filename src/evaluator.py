@@ -80,7 +80,7 @@ class Evaluator:
         if not self.sigmoid_loss:
             metric = self.metrics["Accuracy"]
         else:
-            metric = self.metrics["F1 Macro"]
+            metric = self.metrics["F1 Micro"]
 
         if self.best_metric is None:
             self.best_metric = metric
