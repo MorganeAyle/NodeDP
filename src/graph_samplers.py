@@ -276,8 +276,8 @@ class PreDisjointRandomWalksWithsRestarts:
                 rows.append(new_idx[u])
                 cols.append(new_idx[v])
                 vals.append(True)
-                cols.append(new_idx[v])
-                rows.append(new_idx[u])
+                cols.append(new_idx[u])
+                rows.append(new_idx[v])
                 vals.append(True)
 
         adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
