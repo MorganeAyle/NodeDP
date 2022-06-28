@@ -141,19 +141,12 @@ class Trainer:
             del param.grad
             param.grad1 = param.grad1.cpu()
 
-        grads_norms = torch.zeros((num_nodes, self.grad_norms.shape[0]))  # to compute grad norm of each input/layer
-
-        # compute norm of every gradient
-        for i, param in enumerate(self.model.parameters()):
-            param_grad = param.grad1
-            grads_norms[:, i] = param_grad.norm(dim=tuple(np.arange(len(param_grad.shape))[1:]))[idx]
-
         # compute new noisy gradients
-        new_grads = []
         for i, param in enumerate(self.model.parameters()):
             param_grad = param.grad1
-            denom = torch.maximum(torch.tensor([1] * len(grads_norms), device=grads_norms.device),
-                                  grads_norms[:, i].flatten() / self.grad_norms[i])
+            grad_norm = param_grad.norm(dim=tuple(np.arange(len(param_grad.shape))[1:]))[idx]
+            denom = torch.maximum(torch.tensor([1] * num_nodes, device=grad_norm.device),
+                                  grad_norm.flatten() / self.grad_norms[i])
             for _ in range(len(param_grad.shape) - 1):
                 denom = denom.unsqueeze(-1)
 
@@ -163,9 +156,9 @@ class Trainer:
             # std = torch.ones_like(new_grad) * (sigma * self.grad_norms[i]) ** 2
             std = torch.ones_like(new_grad) * sigma ** 2
             noise = torch.normal(mean, std)
-            new_grads.append((new_grad + noise) / len(grads_norms))
 
-        for i, p in enumerate(self.model.parameters()):
-            del p.grad1
-            p.grad = new_grads[i].cuda()
+            del param.grad1
+            param.grad = ((new_grad + noise) / num_nodes).cuda()
+
         self.optimizer.step()
+
