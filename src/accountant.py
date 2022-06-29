@@ -3,8 +3,11 @@ import pdb
 
 import numpy as np
 
+from autodp.mechanism_zoo import ExactGaussianMechanism
+from autodp.transformer_zoo import Composition, AmplificationBySampling
+
 from src.utils import compute_hypergeometric
-from src.constants import SENSITIVITY_ONE, RDP_ACCOUNTANT
+from src.constants import SENSITIVITY_ONE, RDP_ACCOUNTANT, AUTODP_ACCOUNTANT
 
 
 def compute_sampling_distribution(method, num_train_nodes, num_roots, depth, sampler_args):
@@ -39,7 +42,7 @@ class PrivacyAccountant:
     def __init__(self, training_args, sampler_args, depth, num_train_nodes, clip_norm, fout):
         self.train_args = training_args
         self.method = sampler_args["method"]
-        self.accountant = training_args["accountant"]
+        self.accountant_name = training_args["accountant"]
         self.clip_norm = clip_norm
         self.num_roots = sampler_args["num_root"]
         self.depth = depth
@@ -47,6 +50,7 @@ class PrivacyAccountant:
         self.gamma = 0
         self.epsilon = 0
         self.delta = 0
+        self.steps = 0
 
         max_sampled_nodes = 1 if self.method in SENSITIVITY_ONE else (sampler_args["max_degree"] ** (self.depth + 1)
                                                                       - 1) // (sampler_args["max_degree"] - 1)
@@ -55,37 +59,69 @@ class PrivacyAccountant:
         self.sigma = sigma_without_norm * clip_norm if not training_args['sigma'] else training_args['sigma']
         self.distribution = compute_sampling_distribution(self.method, num_train_nodes, self.num_roots, self.depth,
                                                           sampler_args)
+        self.noise_multiplier = self.sigma / self.sensitivity
 
         fout(f"Max sampled nodes: {max_sampled_nodes}, Sensitivity: {self.sensitivity}, Sigma: {self.sigma}, "
-             f"Gradients norm: {self.clip_norm}, Prob. of not sampling v: {self.distribution[0]}")
+             f"Noise multiplier: {self.noise_multiplier}, Gradients norm: {self.clip_norm}, "
+             f"Prob. of sampling v: {sum(self.distribution[1:])}")
 
     def one_step(self):
-        if self.accountant in RDP_ACCOUNTANT:
-            # Compute RDP parameters
-            alpha = self.train_args["alpha"]
-            if self.accountant == "baseline":
-                self.gamma += 1 / (alpha - 1) * np.log(sum(np.array([p * (
-                    np.exp(alpha * (alpha - 1) * (i * 2 * self.clip_norm) ** 2 / (
-                            2 * self.sigma ** 2))) for i, p in enumerate(self.distribution)])))
+        """
+        Keeps track of the privacy spent at every additional step.
+        """
+        self.steps += 1
 
-            elif self.accountant == "sub_rdp":
-                p = self.distribution[1]
-                rdp_unamp = lambda x: (x * self.sensitivity ** 2) / (2 * self.sigma ** 2)
-                self.gamma += 1 / (alpha - 1) * np.log(
-                    1 + p ** 2 * math.comb(alpha, 2) * min(4 * (np.exp(rdp_unamp(2)) - 1), 2 * np.exp(rdp_unamp(2))))
+        if self.accountant_name in RDP_ACCOUNTANT:
+            if self.accountant_name in AUTODP_ACCOUNTANT:
+                if self.accountant_name == 'rdp_poisson_autodp':
+                    self.delta = self.train_args['delta']
+                    gm1 = ExactGaussianMechanism(self.noise_multiplier, name='GM1')
+                    prob = self.distribution[1]
+                    compose = Composition()
+                    poisson_sample = AmplificationBySampling(PoissonSampling=True)
+                    composed_poisson_mech = compose([poisson_sample(gm1, prob)], [self.steps])
 
-            # Convert to DP parameters
-            self.epsilon = self.gamma + np.log(1 / self.train_args['delta']) / (alpha - 1)
-            self.delta = self.train_args['delta']
+                    self.delta = self.train_args['delta']
+                    self.epsilon = composed_poisson_mech.get_approxDP(self.delta)
 
-        elif self.accountant == "std":
+                elif self.accountant_name == 'rdp_uniform_autodp':
+                    self.delta = self.train_args['delta']
+                    gm1 = ExactGaussianMechanism(self.noise_multiplier, name='GM1')
+                    gm1.replace_one = True
+                    prob = self.distribution[1]
+                    compose = Composition()
+                    uniform_sample = AmplificationBySampling(PoissonSampling=False)
+                    composed_uniform_mech = compose([uniform_sample(gm1, prob)], [self.steps])
+
+                    self.delta = self.train_args['delta']
+                    self.epsilon = composed_uniform_mech.get_approxDP(self.delta)
+
+            else:
+                # Compute RDP parameters
+                alpha = self.train_args["alpha"]
+                if self.accountant_name == "baseline":
+                    self.gamma += 1 / (alpha - 1) * np.log(sum(np.array([p * (
+                        np.exp(alpha * (alpha - 1) * (i * 2 * self.clip_norm) ** 2 / (
+                                2 * self.sigma ** 2))) for i, p in enumerate(self.distribution)])))
+
+                elif self.accountant_name == "sub_rdp":
+                    p = self.distribution[1]
+                    rdp_unamp = lambda x: (x * self.sensitivity ** 2) / (2 * self.sigma ** 2)
+                    self.gamma += 1 / (alpha - 1) * np.log(
+                        1 + p ** 2 * math.comb(alpha, 2) * min(4 * (np.exp(rdp_unamp(2)) - 1), 2 * np.exp(rdp_unamp(2))))
+
+                # Convert to DP parameters
+                self.epsilon = self.gamma + np.log(1 / self.train_args['delta']) / (alpha - 1)
+                self.delta = self.train_args['delta']
+
+        elif self.accountant_name == "std":
             # Compute DP parameters
             eps = self.train_args["eps"]
             self.epsilon += self.distribution[1] * (np.exp(eps) - 1)
             self.delta += self.distribution[1] * self.train_args["delta"]
 
     def log(self, fout):
-        if self.accountant in RDP_ACCOUNTANT:
+        if self.accountant_name in RDP_ACCOUNTANT:
             fout("RDP: (" + str(self.train_args['alpha']) + "," + str(self.gamma) + ")")
 
         fout("DP: (" + str(self.epsilon) + "," + str(self.delta) + ")")
