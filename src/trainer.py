@@ -1,4 +1,5 @@
 import copy
+import pdb
 
 import torch
 from torch import nn
@@ -55,7 +56,6 @@ class Trainer:
             self.clip_norm = training_args['clip_norm']
         elif sampler_args['method'] in DP_METHODS:
             self.grad_norms = self.estimate_init_grad_norms(*self.minibatch.sample_one_batch(out, mode='train'))
-            # self.C = training_args['C%'] * np.sqrt(sum(self.grad_norms ** 2))
             self.grad_norms = training_args['C%'] * self.grad_norms
             self.C = np.sqrt(sum(self.grad_norms ** 2))
         else:
@@ -74,12 +74,6 @@ class Trainer:
             return nn.CrossEntropyLoss(reduction='mean')(preds, labels)
 
     def estimate_init_grad_norms(self, nodes, adj, roots=None):
-        # preds = self.model(self.feats[nodes], adj)
-        # loss = self._loss(preds, self.labels[nodes])
-        # grads = torch.autograd.grad(loss, list(self.model.parameters()))
-        # grad_norms = ([grad.norm() for grad in grads])
-        # return torch.tensor(grad_norms)
-
         grad_norms = []
         i = 0
         count = 0
@@ -93,22 +87,6 @@ class Trainer:
                 grads = torch.autograd.grad(loss, list(self.model.parameters()))
                 grad_norms.append([grad.norm() for grad in grads])
         return torch.tensor(grad_norms).mean(0)
-        #
-        # grad_norms = []
-        # self.model.train()
-        # self.model.zero_grad()
-        # autograd_hacks.clear_backprops(self.model)
-        # idx = []
-        # for i, v in enumerate(nodes):
-        #     if v in roots:
-        #         idx.append(i)
-        # preds = self.model(self.feats[nodes] adj)
-        # self._loss(preds[idx], self.labels[nodes][idx]).backward(retain_graph=True)
-        # autograd_hacks.compute_grad1(self.model)
-        # for param in self.model.parameters():
-        #     del param.grad
-        #     grad_norms.append(param.grad1.norm(dim=tuple(np.arange(len(param.grad1.shape))[1:])).mean())
-        # return torch.tensor(grad_norms)
 
     def train_step(self, nodes, adj, roots=None):
         self.model.train()
@@ -154,7 +132,7 @@ class Trainer:
             new_grad = new_grad.sum(0)
             mean = torch.zeros_like(new_grad)
             # std = torch.ones_like(new_grad) * (sigma * self.grad_norms[i]) ** 2
-            std = torch.ones_like(new_grad) * sigma ** 2
+            std = torch.ones_like(new_grad) * sigma
             noise = torch.normal(mean, std)
 
             del param.grad1
