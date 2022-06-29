@@ -55,7 +55,7 @@ class RandomWalks:
 
         adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
 
-        return adj, None, list(new_idx.keys())
+        return adj, list(sampled_nodes), list(new_idx.keys())
 
 
 class Baseline:

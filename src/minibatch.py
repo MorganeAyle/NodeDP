@@ -120,6 +120,4 @@ class Minibatch:
             self.batch_num += 1
             out("Number of nodes in batch: " + str(adj.shape[0]))
 
-        if self.sampler_method in DP_METHODS:
-            return self.node_subgraph, adj, root_subgraph
-        return self.node_subgraph, adj
+        return self.node_subgraph, adj, root_subgraph
