@@ -19,7 +19,13 @@ DP_METHODS = [
 RDP_ACCOUNTANT = [
     "baseline",
     "sub_rdp",
-    "test"
+    "rdp_poisson_autodp",
+    "rdp_uniform_autodp"
+]
+
+AUTODP_ACCOUNTANT = [
+    "rdp_poisson_autodp",
+    "rdp_uniform_autodp"
 ]
 
 BOUND_DEGREE_METHODS = [
