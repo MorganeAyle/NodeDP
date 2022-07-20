@@ -46,10 +46,13 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
         accountant = None
     elif sampler_args['method'] == 'baseline':
         accountant = PrivacyAccountant(training_args, sampler_args, model_args['num_layers'], len(minibatch.node_train),
-                                       trainer.C, fout=out)
+                                       training_args['clip_norm'], fout=out)
+    elif sampler_args['method'] == 'uniform':
+        accountant = PrivacyAccountant(training_args, sampler_args, None, len(minibatch.node_train),
+                                       training_args['clip_norm'], fout=out)
     elif sampler_args['method'] in DP_METHODS:
         accountant = PrivacyAccountant(training_args, sampler_args, sampler_args['depth'], len(minibatch.node_train),
-                                       trainer.C, fout=out)
+                                       training_args['clip_norm'], fout=out)
     else:
         raise NotImplementedError
 
@@ -77,8 +80,7 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
             t2 = time.time()
             evaluator.model.load_state_dict(trainer.model.state_dict())
             preds, labels = evaluator.eval_step(*minibatch.sample_one_batch(out, mode='val'))
-            metrics = evaluator.calc_metrics(preds, labels)
-            all_metrics.append(metrics)
+            metrics = evaluator.calc_metrics(preds, labels, mode='val')
 
             # Log results
             print_statement = f"Iteration {it}:"
@@ -91,6 +93,11 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
                 accountant.log(out)
                 all_epsilons.append(accountant.epsilon)
                 evaluator.eps = accountant.epsilon
+
+            # save metrics on full dataset
+            preds, labels = evaluator.eval_step(*minibatch.sample_one_batch(out, mode='test'))
+            metrics = evaluator.calc_metrics(preds, labels, mode='test')
+            all_metrics.append(metrics)
 
             if evaluator.early_stopping:
                 out("Early stopping...")
@@ -107,9 +114,10 @@ def run(data_path, use_cuda, num_iterations, eval_every, seed, sampler_args,
     results = metrics
     if sampler_args['method'] in DP_METHODS:
         results['gho'] = accountant.distribution
-        results['C'] = trainer.C.detach().cpu().numpy()
         results['eps'] = evaluator.best_eps
         results['all_metrics'] = all_metrics
         results['all_eps'] = all_epsilons
+        results['sensitivity'] = accountant.sensitivity
+        results['noise_multiplier'] = accountant.noise_multiplier
 
     return results
