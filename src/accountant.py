@@ -7,7 +7,7 @@ from autodp.mechanism_zoo import ExactGaussianMechanism
 from autodp.transformer_zoo import Composition, AmplificationBySampling
 
 from src.utils import compute_hypergeometric
-from src.constants import SENSITIVITY_ONE, RDP_ACCOUNTANT, AUTODP_ACCOUNTANT
+from src.constants import SENSITIVITY_ONE, RDP_ACCOUNTANT, AUTODP_ACCOUNTANT, POISSON_ACCOUNTANT
 
 
 def compute_sampling_distribution(method, num_train_nodes, num_roots, depth, sampler_args):
@@ -32,6 +32,10 @@ def compute_sampling_distribution(method, num_train_nodes, num_roots, depth, sam
         max_sampled_nodes = (sampler_args["max_degree"] ** (depth + 1) - 1) // (sampler_args["max_degree"] - 1)
         rho = compute_hypergeometric(num_train_nodes, max_sampled_nodes, num_roots)
 
+    elif method == 'uniform':
+        rho_1 = num_roots/ num_train_nodes
+        rho = [1-rho_1, rho_1]
+
     else:
         raise NotImplementedError(f"Unknown method {method}.")
 
@@ -54,8 +58,9 @@ class PrivacyAccountant:
 
         max_sampled_nodes = 1 if self.method in SENSITIVITY_ONE else (sampler_args["max_degree"] ** (self.depth + 1)
                                                                       - 1) // (sampler_args["max_degree"] - 1)
-        self.sensitivity = 2 * max_sampled_nodes * clip_norm
-        sigma_without_norm = 2 * max_sampled_nodes
+        cst = 1 if self.accountant_name in POISSON_ACCOUNTANT else 2
+        self.sensitivity = cst * max_sampled_nodes * clip_norm
+        sigma_without_norm = cst * max_sampled_nodes
         self.sigma = sigma_without_norm * clip_norm if not training_args['sigma'] else training_args['sigma']
         self.distribution = compute_sampling_distribution(self.method, num_train_nodes, self.num_roots, self.depth,
                                                           sampler_args)
@@ -104,12 +109,6 @@ class PrivacyAccountant:
                         np.exp(alpha * (alpha - 1) * (i * 2 * self.clip_norm) ** 2 / (
                                 2 * self.sigma ** 2))) for i, p in enumerate(self.distribution)])))
 
-                elif self.accountant_name == "sub_rdp":
-                    p = self.distribution[1]
-                    rdp_unamp = lambda x: (x * self.sensitivity ** 2) / (2 * self.sigma ** 2)
-                    self.gamma += 1 / (alpha - 1) * np.log(
-                        1 + p ** 2 * math.comb(alpha, 2) * min(4 * (np.exp(rdp_unamp(2)) - 1), 2 * np.exp(rdp_unamp(2))))
-
                 # Convert to DP parameters
                 self.epsilon = self.gamma + np.log(1 / self.train_args['delta']) / (alpha - 1)
                 self.delta = self.train_args['delta']
@@ -121,7 +120,4 @@ class PrivacyAccountant:
             self.delta += self.distribution[1] * self.train_args["delta"]
 
     def log(self, fout):
-        if self.accountant_name in RDP_ACCOUNTANT:
-            fout("RDP: (" + str(self.train_args['alpha']) + "," + str(self.gamma) + ")")
-
         fout("DP: (" + str(self.epsilon) + "," + str(self.delta) + ")")
