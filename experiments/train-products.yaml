@@ -1,0 +1,111 @@
+seml:
+  project_root_dir: ..
+  executable: experiments/train.py
+  name: train
+  output_dir: /nfs/students/ayle/NodeDP/logs
+  conda_environment: gcn-dp
+
+slurm:
+  experiments_per_job: 1
+  sbatch_options:
+    account: students
+    gres: gpu:1       # num GPUs
+    mem: 16G          # memory
+    cpus-per-task: 1  # num cores
+    time: 1-00:00     # max time, D-HH:MM
+    partition: ['gpu_all']
+#    qos: interactive
+
+###### BEGIN PARAMETER CONFIGURATION ######
+
+fixed:
+  data_path: './data/ogbn-products'
+  save_model_dir: '/nfs/students/ayle/NodeDP/models/'
+  use_cuda: True
+  eval_every: 10000
+  num_iterations: 200
+
+  sampler_args:
+    method: 'pre_drw_w_restarts'  # options: {rw, drw, pre_drw, pre_drw_w_restarts, baseline}
+    split_lots_into_batches: True
+    preprocess_graph_every: -1
+    restarts: 2
+
+  model_args:
+    arch: 'GCN'
+    dropout: 0.0
+    activation: 'relu'
+
+  training_args:
+#    dp_training: False
+#    accountant: 'none'  # options: {none, baseline, rdp_uniform_autodp}
+    dp_training: True
+    accountant: 'rdp_uniform_autodp'  # options: {none, baseline, rdp_uniform_autodp}
+    loss: 'softmax'
+    optim: 'Adam'
+    early_stopping_after: 30
+
+#    clip_norm: 5
+    delta: 1e-7
+    max_eps: 15
+
+grid:
+  seed:
+    type: choice
+    options:
+      - 1234
+      - 2345
+      - 3456
+
+#  sampler_args.max_degree:
+#    type: choice
+#    options:
+#      - 2
+#      - 4
+
+  training_args.lr:
+    type: choice
+    options:
+#      - 0.01
+#      - 0.05
+      - 0.1
+#      - 0.2
+#      - 0.4
+
+  training_args.clip_norm_per:
+    type: choice
+    options:
+#      - 0.001
+#      - 0.01
+      - 0.1
+#      - 0.25
+#      - 0.5
+#      - 0.75
+
+  training_args.noise_multiplier:
+    type: choice
+    options:
+#      - 1
+#      - 2
+#      - 4
+      - 8
+
+depth1:
+  fixed:
+    sampler_args.depth: 1
+    sampler_args.num_root: 40000
+    model_args.num_layers: 1
+    model_args.hidden_channels: 0
+
+depth2:
+  fixed:
+    sampler_args.depth: 2
+    sampler_args.num_root: 40000
+    model_args.num_layers: 2
+
+  grid:
+    model_args.hidden_channels:
+      type: choice
+      options:
+        - 256
+#        - 512

@@ -1,285 +1,246 @@
 import pdb
 import random
+import time
 
-import scipy.sparse as sp
 import networkx as nx
 import copy
+import numpy as np
+
+from src.constants import MAX_BATCH_SIZE
+from src.utils import binary_search
+from src.graph_samplers_utils import divide_chunks, map_sampled_nodes_to_new_idx, get_sampled_nodes_from_rws, \
+    convert_sampled_nodes_to_adj, convert_neighborhood_edges_to_adj, convert_rws_to_adj
 
 
-class RandomWalks:
-    def __init__(self, adj, nodes, depth, num_roots):
+class UniformNodes:
+    def __init__(self, adj, nodes, num_roots):
         self.adj = adj
         self.nodes = nodes
-        self.depth = depth
         self.num_roots = num_roots
         self.graph = nx.from_scipy_sparse_matrix(self.adj)
 
     def sample(self):
-        sampled_nodes = set()
+        sampled_nodes = np.unique(random.sample(list(self.nodes), self.num_roots))
 
-        i = 0
-        while i <= self.num_roots:
-            i += 1
+        new_idx, count = map_sampled_nodes_to_new_idx(sampled_nodes)
+
+        adj = convert_sampled_nodes_to_adj(sampled_nodes, self.graph, new_idx, count)
+
+        assert not len((adj != adj.T).data)
+        assert not adj.diagonal().sum()
+
+        return [adj], [sampled_nodes], [sampled_nodes]
+
+
+class RandomWalks:
+    def __init__(self, adj, nodes, depth, num_roots):
+        self.nodes = nodes
+        self.depth = depth
+        self.num_roots = num_roots
+        self.graph = nx.from_scipy_sparse_matrix(adj)
+
+    def sample(self):
+        sampled_nodes = []
+        sampled_roots = []
+
+        for _ in range(self.num_roots):
             # choose a random root
             root_idx = random.randint(0, len(self.nodes) - 1)
             node = self.nodes[root_idx]
-            sampled_nodes.add(node)
+            sampled_nodes.append(node)
+            sampled_roots.append(node)
             # construct random walk
             for _ in range(self.depth):
                 valid_neighbors = [v for v in self.graph.neighbors(node)]
                 if len(valid_neighbors):
                     neighbor = random.choice(valid_neighbors)
-                    sampled_nodes.add(neighbor)
+                    sampled_nodes.append(neighbor)
                     node = neighbor
                 else:
                     break
 
-        new_idx = {}
-        count = 0
+        sampled_nodes = np.unique(sampled_nodes)
 
-        rows = []
-        cols = []
-        vals = []
+        new_idx, count = map_sampled_nodes_to_new_idx(sampled_nodes)
 
-        for node in sampled_nodes:
-            # create new idx for node
-            new_idx[node] = count
-            count += 1
+        adj = convert_sampled_nodes_to_adj(sampled_nodes, self.graph, new_idx, count)
 
-        for node in sampled_nodes:
-            for neighbor in self.graph.neighbors(node):
-                if neighbor in sampled_nodes:
-                    rows.append(new_idx[node])
-                    cols.append(new_idx[neighbor])
-                    vals.append(True)
+        sampled_training_nodes = [node for node in sampled_nodes if node in self.nodes]
 
-        adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
+        assert not len((adj != adj.T).data)
+        assert not adj.diagonal().sum()
 
-        return adj, list(sampled_nodes), list(new_idx.keys())
+        return [adj], [sampled_training_nodes], [sampled_nodes]
 
 
 class Baseline:
-    def __init__(self, adj, nodes, depth, num_roots):
+    def __init__(self, adj, nodes, depth, num_roots, split_lots_into_batches, neighborhoods, neighborhoods_edges):
         self.adj = adj
         self.nodes = nodes
         self.depth = depth
         self.num_roots = num_roots
-        self.graph = nx.from_scipy_sparse_matrix(self.adj)  # convert to networkx graph
-
-        self.neighborhood = []
-        self.edges = set()
-
-    def depth_first_search(self, node, depth, graph):
-        self.neighborhood.append(node)
-        if depth == 0:
-            return
-        else:
-            for neighbor in graph.neighbors(node):
-                if neighbor not in self.neighborhood:
-                    if (node, neighbor) not in self.edges:
-                        self.edges.add((node, neighbor))
-                        self.edges.add((neighbor, node))
-                    return self.depth_first_search(neighbor, depth - 1, graph)
+        self.split_lots_into_batches = split_lots_into_batches
+        self.neighborhoods = neighborhoods
+        self.neighborhoods_edges = neighborhoods_edges
 
     def sample(self):
-        edges = {}
-        sampled_nodes = []
-        roots = random.sample(list(self.nodes), self.num_roots)  # sample roots uniformly at random
-        sampled_nodes.extend(roots)
+        sampled_roots = random.sample(list(self.nodes), self.num_roots)  # sample roots uniformly at random
+        if self.split_lots_into_batches:
+            batched_roots = list(divide_chunks(sampled_roots, MAX_BATCH_SIZE))
+        else:
+            batched_roots = [sampled_roots]
 
-        # TODO: do this step in pre-processed way
-        for root in roots:
-            node = copy.deepcopy(root)
-            self.neighborhood = []
-            self.edges = set()
-            self.depth_first_search(node, self.depth, self.graph)
-            neighborhood, neighborhood_edges = self.neighborhood, self.edges
-            edges[root] = neighborhood_edges
-            sampled_nodes.extend(neighborhood)
+        all_adj = []
+        all_idx = []
+        all_roots = []
 
-        new_idx = {}
-        count = 0
+        for roots in batched_roots:
+            sampled_nodes = copy.deepcopy(roots)
+            edges = {}
+            for root in roots:
+                neighborhood, neighborhood_edges = self.neighborhoods[root], self.neighborhoods_edges[root]
+                edges[root] = neighborhood_edges
+                sampled_nodes.extend(neighborhood)
 
-        rows = []
-        cols = []
-        vals = []
+            sampled_nodes = np.unique(sampled_nodes)
 
-        for node in sampled_nodes:
-            if node not in new_idx:
-                # create new idx for root
-                new_idx[node] = count
-                count += 1
+            new_idx, count = map_sampled_nodes_to_new_idx(sampled_nodes)
 
-        for root in roots:
-            neighborhood_edges = edges[root]
-            for (u, v) in neighborhood_edges:
-                rows.append(new_idx[u])
-                cols.append(new_idx[v])
-                vals.append(True)
-                cols.append(new_idx[v])
-                rows.append(new_idx[u])
-                vals.append(True)
+            adj = convert_neighborhood_edges_to_adj(roots, edges, new_idx, count)
 
-        adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
+            all_adj.append(adj)
+            all_roots.append(roots)
+            all_idx.append(list(new_idx.keys()))
 
-        return adj, roots, list(new_idx.keys())
+            assert not len((adj != adj.T).data)
+            assert not adj.diagonal().sum()
+
+        return all_adj, all_roots, all_idx
 
 
 class PreDisjointRandomWalks:
-    def __init__(self, rws, roots, num_roots):
+    def __init__(self, rws, roots, num_roots, split_lots_into_batches):
         self.rws = rws
         self.roots = roots
         self.num_roots = num_roots
+        self.split_lots_into_batches = split_lots_into_batches
 
     def sample(self):
-        roots = random.sample(self.roots, self.num_roots)
-        new_idx = {}
-        count = 0
+        sampled_roots = random.sample(self.roots, self.num_roots)
+        if self.split_lots_into_batches:
+            batched_roots = list(divide_chunks(sampled_roots, MAX_BATCH_SIZE))
+        else:
+            batched_roots = [sampled_roots]
 
-        rows = []
-        cols = []
-        vals = []
-        added_edges = set()
+        all_adj = []
+        all_idx = []
+        all_roots = []
 
-        for root in roots:
-            # create new idx for root
-            new_idx[root] = count
-            count += 1
+        for roots in batched_roots:
+            roots, sampled_nodes = get_sampled_nodes_from_rws(roots, self.rws)
 
-            # get neighbors
-            neighbors = self.rws[root]
-            for neighbor in neighbors[1:]:
-                if neighbor not in new_idx:
-                    new_idx[neighbor] = count
-                    count += 1
+            new_idx, count = map_sampled_nodes_to_new_idx(sampled_nodes)
 
-        for root in roots:
-            rw = self.rws[root]
-            for irw in range(len(rw) - 1):  # rw has to include root
-                if (rw[irw], rw[irw]+1) not in added_edges:
-                    rows.append(new_idx[rw[irw]])
-                    cols.append(new_idx[rw[irw+1]])
-                    vals.append(True)
-                    cols.append(new_idx[rw[irw]])
-                    rows.append(new_idx[rw[irw+1]])
-                    vals.append(True)
+            adj = convert_rws_to_adj(roots, self.rws, new_idx, count)
 
-                    added_edges.add((rw[irw], rw[irw+1]))
-                    added_edges.add((rw[irw+1], rw[irw]))
+            all_adj.append(adj)
+            all_roots.append(roots)
+            all_idx.append(sampled_nodes)
 
-        adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
+            assert not len((adj != adj.T).data)
+            assert not adj.diagonal().sum()
 
-        return adj, roots, list(new_idx.keys())
+        return all_adj, all_roots, all_idx
+
+
+class PreDisjointRandomWalksWithsRestarts:
+    def __init__(self, rws, edges, roots, num_roots, split_lots_into_batches):
+        self.rws = rws
+        self.edges = edges
+        self.roots = roots
+        self.num_roots = num_roots
+        self.split_lots_into_batches = split_lots_into_batches
+
+    def sample(self):
+        sampled_roots = random.sample(self.roots, self.num_roots)
+        if self.split_lots_into_batches:
+            batched_roots = list(divide_chunks(sampled_roots, MAX_BATCH_SIZE))
+        else:
+            batched_roots = [sampled_roots]
+
+        all_adj = []
+        all_idx = []
+        all_roots = []
+
+        for roots in batched_roots:
+            roots, sampled_nodes = get_sampled_nodes_from_rws(roots, self.rws)
+
+            new_idx, count = map_sampled_nodes_to_new_idx(sampled_nodes)
+
+            adj = convert_neighborhood_edges_to_adj(roots, self.edges, new_idx, count)
+
+            all_adj.append(adj)
+            all_roots.append(roots)
+            all_idx.append(sampled_nodes)
+
+            assert not len((adj != adj.T).data)
+            assert not adj.diagonal().sum()
+
+        return all_adj, all_roots, all_idx
 
 
 class DisjointRandomWalks:
-    def __init__(self, adj, nodes, depth, num_roots):
+    def __init__(self, adj, nodes, depth, num_roots, split_lots_into_batches):
         self.adj = adj
         self.nodes = nodes
         self.depth = depth
         self.num_roots = num_roots
         self.graph = nx.from_scipy_sparse_matrix(self.adj)
+        self.split_lots_into_batches = split_lots_into_batches
 
     def sample(self):
         rws = {}
-        sampled_nodes = set()
-        roots = random.sample(list(self.nodes), self.num_roots)
-        for root in roots:
-            sampled_nodes.add(root)
+        sampled_roots = random.sample(list(self.nodes), self.num_roots)
+        if self.split_lots_into_batches:
+            batched_roots = list(divide_chunks(sampled_roots, MAX_BATCH_SIZE))
+        else:
+            batched_roots = [sampled_roots]
+        sampled_nodes = set(copy.deepcopy(sampled_roots))
 
-        for root in roots:
-            rw = [root]
-            node = copy.deepcopy(root)
-            for _ in range(self.depth):
-                valid_neighbors = [v for v in self.graph.neighbors(node) if v not in sampled_nodes]
-                if len(valid_neighbors):
-                    neighbor = random.choice(valid_neighbors)
-                    rw.append(neighbor)
-                    sampled_nodes.add(neighbor)
-                    node = copy.deepcopy(neighbor)
-                else:
-                    break
-            rws[root] = rw
+        all_adj = []
+        all_idx = []
+        all_roots = []
 
-        new_idx = {}
-        count = 0
+        for roots in batched_roots:
+            batch_sampled_nodes = []
+            for root in roots:
+                batch_sampled_nodes.append(root)
+                rw = [root]
+                node = copy.deepcopy(root)
+                for _ in range(self.depth):
+                    valid_neighbors = [v for v in self.graph.neighbors(node) if v not in sampled_nodes]
+                    if len(valid_neighbors):
+                        neighbor = random.choice(valid_neighbors)
+                        rw.append(neighbor)
+                        sampled_nodes.add(neighbor)
+                        batch_sampled_nodes.append(neighbor)
+                        node = copy.deepcopy(neighbor)
+                    else:
+                        break
+                rws[root] = rw
 
-        rows = []
-        cols = []
-        vals = []
-        added_edges = set()
+            roots = np.unique(roots)
+            batch_sampled_nodes = np.unique(batch_sampled_nodes)
 
-        for root in roots:
-            # create new idx for root
-            new_idx[root] = count
-            count += 1
+            new_idx, count = map_sampled_nodes_to_new_idx(batch_sampled_nodes)
 
-            # get neighbors
-            neighbors = rws[root]
-            for neighbor in neighbors[1:]:
-                if neighbor not in new_idx:
-                    new_idx[neighbor] = count
-                    count += 1
+            adj = convert_rws_to_adj(roots, rws, new_idx, count)
 
-        for root in roots:
-            rw = rws[root]
-            for irw in range(len(rw) - 1):  # rw has to include root
-                if (rw[irw], rw[irw] + 1) not in added_edges:
-                    rows.append(new_idx[rw[irw]])
-                    cols.append(new_idx[rw[irw + 1]])
-                    vals.append(True)
-                    cols.append(new_idx[rw[irw]])
-                    rows.append(new_idx[rw[irw + 1]])
-                    vals.append(True)
+            all_adj.append(adj)
+            all_roots.append(roots)
+            all_idx.append(batch_sampled_nodes)
 
-                    added_edges.add((rw[irw], rw[irw + 1]))
-                    added_edges.add((rw[irw + 1], rw[irw]))
+            assert not len((adj != adj.T).data)
+            assert not adj.diagonal().sum()
 
-        adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
-
-        return adj, roots, list(new_idx.keys())
-
-
-class PreDisjointRandomWalksWithsRestarts:
-    def __init__(self, rws, edges, roots, num_roots):
-        self.rws = rws
-        self.edges = edges
-        self.roots = roots
-        self.num_roots = num_roots
-
-    def sample(self):
-
-        roots = random.sample(self.roots, self.num_roots)
-
-        new_idx = {}
-        count = 0
-
-        rows = []
-        cols = []
-        vals = []
-
-        for root in roots:
-            # create new idx for root
-            new_idx[root] = count
-            count += 1
-
-            # get neighbors
-            neighbors = self.rws[root]
-            for neighbor in neighbors[1:]:
-                if neighbor not in new_idx:
-                    new_idx[neighbor] = count
-                    count += 1
-
-        for root in roots:
-            neighborhood_edges = self.edges[root]
-            for (u, v) in neighborhood_edges:
-                rows.append(new_idx[u])
-                cols.append(new_idx[v])
-                vals.append(True)
-                cols.append(new_idx[u])
-                rows.append(new_idx[v])
-                vals.append(True)
-
-        adj = sp.csr_matrix((vals, (rows, cols)), shape=(count, count))
-
-        return adj, roots, list(new_idx.keys())
+        return all_adj, all_roots, all_idx

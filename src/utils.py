@@ -1,4 +1,6 @@
 import copy
+import pdb
+
 import scipy
 import numpy as np
 import json
@@ -7,7 +9,9 @@ import scipy.sparse as sp
 import torch
 from math import comb
 import random
-import networkx as nx
+import os
+
+from src.constants import TRANSDUCTIVE_DATASETS
 
 
 def configure_seeds(seed, device):
@@ -18,17 +22,38 @@ def configure_seeds(seed, device):
         torch.cuda.manual_seed_all(seed)
 
 
+def create_save_path(save_model_dir, data_path, num_iterations, seed, sampler_args, training_args, model_args, out):
+    model_name = f'data={data_path.split("/")[-1]}_iter={num_iterations}_seed={seed}'
+    for key, val in sampler_args.items():
+        key = key.split('_')[0]
+        model_name += '_' + str(key) + '=' + str(val)
+    for key, val in training_args.items():
+        key = key.split('_')[0]
+        model_name += '_' + str(key) + '=' + str(val)
+    for key, val in model_args.items():
+        key = key.split('_')[0]
+        model_name += '_' + str(key) + '=' + str(val)
+    save_model_path = os.path.join(save_model_dir, model_name)
+    out("Model path: " + save_model_path)
+    return save_model_path
+
+
 def load_data(data_path, out):
     out("Loading data...")
+    # Full adjacency
     adj_full = scipy.sparse.load_npz('./{}/adj_full.npz'.format(data_path)).astype(float)
     assert not len((adj_full != adj_full.T).data)
     adj_full = (adj_full - scipy.sparse.diags([adj_full.diagonal()], [0])).astype(bool)
     assert not adj_full.diagonal().any()
 
-    adj_train = scipy.sparse.load_npz('./{}/adj_train.npz'.format(data_path)).astype(float)
-    assert not len((adj_train != adj_train.T).data)
-    adj_train = (adj_train - scipy.sparse.diags([adj_train.diagonal()], [0])).astype(bool)
-    assert not adj_train.diagonal().any()
+    # Training adjacency
+    if data_path.split('/')[-1] in TRANSDUCTIVE_DATASETS:
+        adj_train = copy.deepcopy(adj_full)
+    else:
+        adj_train = scipy.sparse.load_npz('./{}/adj_train.npz'.format(data_path)).astype(float)
+        assert not len((adj_train != adj_train.T).data)
+        adj_train = (adj_train - scipy.sparse.diags([adj_train.diagonal()], [0])).astype(bool)
+        assert not adj_train.diagonal().any()
 
     role = json.load(open('./{}/role.json'.format(data_path)))
     feats = np.load('./{}/feats.npy'.format(data_path))
@@ -38,7 +63,7 @@ def load_data(data_path, out):
 
     # normalize features
     out("Normalizing data...")
-    train_nodes = np.array(list(set(adj_train.nonzero()[0])))
+    train_nodes = np.array(role['tr'])
     train_feats = feats[train_nodes]
     scaler = StandardScaler()
     scaler.fit(train_feats)
@@ -94,6 +119,30 @@ def compute_hypergeometric(N, d, m):
     return [comb(d, i) * comb(N - d, m - i) / comb(N, m) for i in range(d + 1)]
 
 
+def binary_search(arr, low, high, x):
+    # Check base case
+    if high >= low:
+
+        mid = (high + low) // 2
+
+        # If element is present at the middle itself
+        if arr[mid] == x:
+            return mid
+
+        # If element is smaller than mid, then it can only
+        # be present in left subarray
+        elif arr[mid] > x:
+            return binary_search(arr, low, mid - 1, x)
+
+        # Else the element can only be present in right subarray
+        else:
+            return binary_search(arr, mid + 1, high, x)
+
+    else:
+        # Element is not present in the array
+        return -1
+
+
 def bound_adj_degree(adj, max_degree):
     new_row = []
     new_col = []
@@ -129,30 +178,31 @@ def bound_adj_degree(adj, max_degree):
     return new_adj
 
 
-def sample_rws(adj, nodes, depth):
+def sample_rws(G, nodes, depth):
     rws = {}
-    G = nx.from_scipy_sparse_matrix(adj)
-    tot_num_nodes = len(nodes)
-    nodes = list(nodes)
-    random.shuffle(nodes)
+    nodes = np.array(nodes)
     sampled_nodes = set()
     sampled_roots = []
 
-    while len(sampled_nodes) != tot_num_nodes:
-        root = nodes.pop()
-        while root in sampled_nodes:
-            root = nodes.pop()
-        sampled_roots.append(root)
-        sampled_nodes.add(root)
-        rw = [root]
+    while len(nodes) != 0:
+        iroot = random.randint(0, len(nodes)-1)
+        root = nodes[iroot]
         node = copy.deepcopy(root)
+        index = np.argwhere(nodes == node)
+        nodes = np.delete(nodes, index)
+        sampled_nodes.add(node)
+        sampled_roots.append(node)
+
+        rw = [node]
         for _ in range(depth):
             valid_neighbors = [v for v in G.neighbors(node) if v not in sampled_nodes]
             if len(valid_neighbors):
-                neighbor = random.choice(valid_neighbors)
-                rw.append(neighbor)
-                sampled_nodes.add(neighbor)
-                node = copy.deepcopy(neighbor)
+                node = random.choice(valid_neighbors)
+                rw.append(node)
+                if node not in sampled_nodes:
+                    sampled_nodes.add(node)
+                index = np.argwhere(nodes == node)
+                nodes = np.delete(nodes, index)
             else:
                 break
         rws[root] = rw
@@ -160,22 +210,21 @@ def sample_rws(adj, nodes, depth):
     return rws, sampled_roots
 
 
-def sample_rws_w_restarts(adj, nodes, depth, restarts):
+def sample_rws_w_restarts(G, nodes, depth, restarts):
     rws = {}
     edges = {}
-    G = nx.from_scipy_sparse_matrix(adj)
-    tot_num_nodes = len(nodes)
-    nodes = list(nodes)
-    random.shuffle(nodes)
+    nodes = np.array(nodes)
     sampled_nodes = set()
     sampled_roots = []
 
-    while len(sampled_nodes) != tot_num_nodes:
-        root = nodes.pop()
-        while root in sampled_nodes:
-            root = nodes.pop()
-        sampled_roots.append(root)
+    while len(nodes) != 0:
+        iroot = random.randint(0, len(nodes) - 1)
+        root = nodes[iroot]
+        index = np.argwhere(nodes == root)
+        nodes = np.delete(nodes, index)
         sampled_nodes.add(root)
+        sampled_roots.append(root)
+
         rw = [root]
         redges = []
         for _ in range(restarts):
@@ -185,13 +234,48 @@ def sample_rws_w_restarts(adj, nodes, depth, restarts):
                 if len(valid_neighbors):
                     neighbor = random.choice(valid_neighbors)
                     rw.append(neighbor)
-                    sampled_nodes.add(neighbor)
                     redges.append((node, neighbor))
                     redges.append((neighbor, node))
+                    if neighbor not in sampled_nodes:
+                        sampled_nodes.add(neighbor)
+                    index = np.argwhere(nodes == neighbor)
+                    nodes = np.delete(nodes, index)
                     node = copy.deepcopy(neighbor)
                 else:
                     break
-        rws[root] = rw
-        edges[root] = redges
+            rws[root] = rw
+            edges[root] = redges
 
     return rws, edges, sampled_roots
+
+
+class DFS:
+    def __init__(self, nodes, depth, graph):
+        self.nodes = nodes
+        self.depth = depth
+        self.graph = graph
+
+        self.neighborhoods = {}
+        self.neighborhoods_edges = {}
+
+    def depth_first_search(self, node, depth, graph):
+        self.neighborhood.append(node)
+        if depth == 0:
+            return
+        else:
+            for neighbor in graph.neighbors(node):
+                if neighbor not in self.neighborhood:
+                    if (node, neighbor) not in self.edges:
+                        self.edges.add((node, neighbor))
+                        self.edges.add((neighbor, node))
+                    return self.depth_first_search(neighbor, depth - 1, graph)
+
+    def sample_all_neighborhoods(self):
+        for root in self.nodes:
+            node = copy.copy(root)
+            self.neighborhood = []
+            self.edges = set()
+            self.depth_first_search(node, self.depth, self.graph)
+            neighborhood, neighborhood_edges = self.neighborhood, self.edges
+            self.neighborhoods[root] = neighborhood
+            self.neighborhoods_edges[root] = neighborhood_edges

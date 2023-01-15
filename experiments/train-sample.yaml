@@ -1,6 +1,6 @@
 seml:
   project_root_dir: ..
-  executable: experiments/train.py
+  executable: experiments/train-tmp.py
   name: train
   output_dir: /nfs/students/ayle/NodeDP/logs
   conda_environment: gcn-dp
@@ -34,21 +34,23 @@ fixed:
 
   model_args:
     arch: 'GCN'
-    hidden_channels: 256
+    hidden_channels: 512
     dropout: 0.0
     num_layers: 2
     activation: 'relu'
 
   training_args:
-    accountant: 'baseline'  # options: {none, baseline, std, sub_rdp}
+    accountant: 'dp'  # options: {none, baseline, std, sub_rdp}
     loss: 'softmax'
 #    lr: 0.05
     optim: 'Adam'
     early_stopping_after: 20
-#    C%: 0.05
+#    clip_norm: 5
+
+#    C%: 1000000
 #    alpha: 2
-    delta: 1e-6
-    max_eps: 15
+#    delta: 1e-6
+#    max_eps: 15
 #    sigma: None
 
 grid:
@@ -57,43 +59,33 @@ grid:
     type: choice
     options:
       - 1234
-#      - 2345
+      - 2345
 #      - 3456
-
-  training_args.alpha:
-    type: choice
-    options:
-#      - 2
-      - 3
-#      - 4
-#      - 5
-
-  training_args.sigma:
-    type: choice
-    options:
-#      - None
-      - 1.
-#      - 2.
-#      - 3.
 
   training_args.lr:
     type: choice
     options:
-#      - 0.01
+#      - 0.005
+      - 0.01
 #      - 0.03
 #      - 0.04
 #      - 0.05
 #      - 0.06
 #      - 0.07
 #      - 0.08
-      - 0.09
+#      - 0.09
       - 0.1
-      - 0.12
-      - 0.14
+#      - 0.12
+#      - 0.14
 
   training_args.C%:
     type: choice
     options:
       - 0.05
-      - 0.1
-      - 0.2
+#      - 0.25
+      - 0.5
+      - 1
+      - 1e1
+      - 1e2
+#      - 1e3
+#      - 1e6

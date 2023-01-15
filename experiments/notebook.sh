@@ -5,7 +5,7 @@
 #SBATCH -t 1-00:00 # time after which the process will be killed (D-HH:MM)
 #SBATCH -o "/nfs/homedirs/%u/slurm-output/slurm-%j.out"
 #SBATCH --mem=16G # the memory (MB) that is allocated to the job. If your job exceeds this it will be killed
-# #SBATCH --qos=interactive # this qos ensures a very high priority but only one job per user can run under this mode.
+#SBATCH --qos=interactive # this qos ensures a very high priority but only one job per user can run under this mode.
 #SBATCH --cpus-per-task=1
 #SBATCH --exclude=mdsi-gpu01,mdsi-gpu02,gpu18,gpu19,gpu15,gpu16,gpu17
 

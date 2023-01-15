@@ -19,18 +19,17 @@ slurm:
 
 fixed:
   data_path: './data/ogbn-arxiv_undirected'
-#  data_path: './data/ppi'
   use_cuda: True
   eval_every: 1
   num_iterations: 1000
 #  seed: 1234
 
   sampler_args:
-    method: 'pre_drw_w_restarts'  # options: {rw, drw, pre_drw, pre_drw_w_restarts, baseline}
-    num_root: 5000
-    depth: 2
-#    max_degree: 2
-    restarts: 2
+    method: 'baseline'  # options: {rw, drw, pre_drw, baseline}
+    num_root: 10000
+#    depth: 2
+    max_degree: 2
+#    restarts: 2
 
   model_args:
     arch: 'GCN'
@@ -44,7 +43,7 @@ fixed:
     loss: 'softmax'
 #    lr: 0.05
     optim: 'Adam'
-    early_stopping_after: 20
+    early_stopping_after: 15
 #    C%: 0.05
 #    alpha: 2
     delta: 1e-6
@@ -71,10 +70,10 @@ grid:
   training_args.sigma:
     type: choice
     options:
-#      - None
-      - 1.
-#      - 2.
-#      - 3.
+      - None
+#      - 10
+#      - 20
+#      - 30
 
   training_args.lr:
     type: choice
@@ -82,18 +81,18 @@ grid:
 #      - 0.01
 #      - 0.03
 #      - 0.04
-#      - 0.05
+      - 0.05
 #      - 0.06
 #      - 0.07
 #      - 0.08
-      - 0.09
+#      - 0.09
       - 0.1
-      - 0.12
-      - 0.14
+#      - 0.12
 
   training_args.C%:
     type: choice
     options:
-      - 0.05
+#      - 0.5
+#      - 0.3
       - 0.1
-      - 0.2
+      - 0.05

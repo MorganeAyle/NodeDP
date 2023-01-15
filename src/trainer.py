@@ -3,11 +3,14 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 from src import autograd_hacks
+import pdb
 
 from src.models import create_model
 from src.constants import DP_METHODS, NON_DP_METHODS
+from src.utils import binary_search
 
 import warnings
+import time
 
 
 class Trainer:
@@ -49,18 +52,16 @@ class Trainer:
             raise NotImplementedError
 
         # Get gradient norms
-        if sampler_args['method'] in NON_DP_METHODS:
+        if not training_args['dp_training']:
             self.clip_norm = training_args['clip_norm']
-        elif sampler_args['method'] in DP_METHODS:
-            clip_norm = training_args['clip_norm']
+        else:
+            clip_norm_per = training_args['clip_norm_per']
             init_grad_norms = self.estimate_init_grad_norms(*self.minibatch.sample_one_batch(out, mode='train'))
-            if np.sqrt(sum(init_grad_norms ** 2)) < clip_norm:
-                warnings.warn("Specified clip norm is larger than initial model's clip norm. Use smaller clip_norm"
-                              "for better privacy guarantees.")
+            clip_norm = np.sqrt(sum(init_grad_norms ** 2)) * clip_norm_per
+            self.clip_norm = clip_norm.item()
+            out("Initial gradients norm: " + str(np.sqrt(sum(init_grad_norms ** 2))))
             grad_weights = torch.nn.functional.softmax(init_grad_norms, dim=0)
             self.per_param_clip_norm = np.sqrt(grad_weights * (clip_norm ** 2))
-        else:
-            raise NotImplementedError
 
     def predict(self, preds):
         return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
@@ -80,6 +81,8 @@ class Trainer:
         count = 0
         while count < 10:
             i += 1
+            if i >= len(nodes[0]):
+                break
             if nodes[0][i] in roots[0]:
                 count += 1
                 self.model.zero_grad()
@@ -90,24 +93,27 @@ class Trainer:
         return torch.tensor(grad_norms).mean(0)
 
     def train_step(self, nodes, adj, roots=None):
+        nodes, adj = nodes[0], adj[0]
+        if roots is not None:
+            roots = roots[0]
         self.model.train()
         self.optimizer.zero_grad()
         preds = self.model(self.feats[nodes], adj)
 
-        loss = self._loss(preds, self.labels[nodes])
+        if roots is None:
+            loss = self._loss(preds, self.labels[nodes])
+        else:
+            idx = [i for i, v in enumerate(nodes) if binary_search(roots, 0, len(roots)-1, v) != -1]
+            loss = self._loss(preds[idx], self.labels[nodes][idx])
+
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_norm)
         self.optimizer.step()
-        return loss, self.predict(preds), self.labels[nodes]
+        return loss
 
     def dp_train_step_fast(self, all_nodes, all_adj, all_roots=None, sigma=1.):
         all_grads = []
         num_nodes = sum([len(roots) for roots in all_roots])
-
-        if type(all_adj) != list:
-            all_nodes = [all_nodes]
-            all_adj = [all_adj]
-            all_roots = [all_roots]
 
         for nodes, adj, roots in zip(all_nodes, all_adj, all_roots):
             self.model.train()
@@ -118,7 +124,7 @@ class Trainer:
                     del param.grad1
 
             # compute loss only on training nodes
-            idx = [i for i, v in enumerate(nodes) if v in roots]
+            idx = [i for i, v in enumerate(nodes) if binary_search(roots, 0, len(roots)-1, v) != -1]
             preds = self.model(self.feats[nodes], adj)
             self._loss(preds[idx], self.labels[nodes][idx]).backward(retain_graph=True)
             autograd_hacks.compute_grad1(self.model)

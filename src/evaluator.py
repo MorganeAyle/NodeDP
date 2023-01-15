@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 from sklearn import metrics
 from torch.autograd import Variable
+import pdb
 
 
 from src.models import create_model
@@ -45,13 +46,13 @@ class Evaluator:
     def predict(self, preds):
         return nn.Sigmoid()(preds) if self.sigmoid_loss else F.softmax(preds, dim=1)
 
-    def eval_step(self, nodes, adj, roots=None):
+    def eval_step(self, nodes, adj, roots):
         self.model.eval()
         with torch.no_grad():
-            preds = self.model(self.feats[nodes], adj)
-        return self.predict(preds), self.labels[nodes]
+            preds = self.model(self.feats, adj)
+        return self.predict(preds)[roots], self.labels[roots]
 
-    def calc_metrics(self, preds, labels):
+    def calc_metrics(self, preds, labels, mode='val'):
         y_pred = to_numpy(preds)
         y_true = to_numpy(labels)
 
@@ -69,7 +70,8 @@ class Evaluator:
         if not self.sigmoid_loss:
             ret["Accuracy"] = metrics.accuracy_score(y_true, y_pred)
 
-        self.metrics = ret
+        if mode == 'val':
+            self.metrics = ret
         return ret
 
     @property
@@ -77,10 +79,7 @@ class Evaluator:
         """
         Keeps track of the best metric for the corresponding loss and returns True if early stopping needed.
         """
-        if not self.sigmoid_loss:
-            metric = self.metrics["Accuracy"]
-        else:
-            metric = self.metrics["F1 Micro"]
+        metric = self.metrics["F1 Micro"]
 
         if self.best_metric is None:
             self.best_metric = metric
